@@ -23,7 +23,10 @@ QString AppStrings::nicknamePlaceholder(const QString &saveShortcut, const QStri
         .arg(saveShortcut, cancelShortcut, aiShortcut);
 }
 QString AppStrings::thumbnailUnavailable() { return QStringLiteral("无法预览这张图片"); }
-QString AppStrings::aiRunning() { return QStringLiteral("AI识别中……"); }
+QString AppStrings::aiPreparing() { return QStringLiteral("正在准备图片……"); }
+QString AppStrings::aiSending() { return QStringLiteral("正在发送图片……"); }
+QString AppStrings::aiRecognizing() { return QStringLiteral("AI正在识图……"); }
+QString AppStrings::aiProcessing() { return QStringLiteral("正在处理识图结果……"); }
 QString AppStrings::aiFailed() { return QStringLiteral("AI识别失败"); }
 QString AppStrings::saveButton(const QString &shortcut) { return QStringLiteral("保存 (%1)").arg(shortcut); }
 QString AppStrings::cancelButton(const QString &shortcut) { return QStringLiteral("取消 (%1)").arg(shortcut); }
@@ -76,6 +79,11 @@ QString AppStrings::modelLabel() { return QStringLiteral("Model"); }
 QString AppStrings::apiKeyLabel() { return QStringLiteral("API_KEY"); }
 QString AppStrings::apiKeyEnvLabel() { return QStringLiteral("API_ENV_KEY"); }
 QString AppStrings::autoAiText() { return QStringLiteral("总是将捕获图片发送给AI识图"); }
+QString AppStrings::aiNicknameExampleCountLabel() { return QStringLiteral("Nickname风格示例数"); }
+QString AppStrings::aiNicknameExampleCountHint()
+{
+    return QStringLiteral("每次请求从已有nickname中随机选择；设为0表示不使用风格示例。");
+}
 QString AppStrings::endpointHint() { return QStringLiteral("结尾应该是一个带 /chat/completions 的URL。"); }
 QString AppStrings::keepApiKeyPlaceholder() { return QStringLiteral("留空表示不修改已保存密钥"); }
 QString AppStrings::storedApiKeyPlaceholder() { return QStringLiteral("已保存在Windows凭据管理器"); }
@@ -110,6 +118,7 @@ QString AppStrings::importFinishedMessage(int memes, int nicknames)
 QString AppStrings::importedFailures(int count) { return QStringLiteral("\n失败：%1 项。").arg(count); }
 QString AppStrings::apiKeyMissingMessage() { return QStringLiteral("API_KEY或API_ENV_KEY至少需要配置一个。"); }
 QString AppStrings::aiImageInvalidMessage() { return QStringLiteral("图片为空或超出AI请求大小限制。"); }
+QString AppStrings::aiPromptUnavailableMessage() { return QStringLiteral("AI识图提示词资源无法读取。"); }
 QString AppStrings::aiHttpFailedMessage(int status) { return QStringLiteral("AI HTTP请求失败（状态 %1）。").arg(status); }
 QString AppStrings::aiTimeoutMessage() { return QStringLiteral("AI请求已超时（30秒）。"); }
 QString AppStrings::aiNicknameEmptyMessage() { return QStringLiteral("AI返回的nickname为空。"); }

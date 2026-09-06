@@ -58,6 +58,7 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     connect(m_model, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_apiEnvName, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_autoAi, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
+    connect(m_aiNicknameExampleCount, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_galleryPath, &QLineEdit::editingFinished, this, [this]() { scheduleSave(); });
     connect(m_cacheSize, &QComboBox::currentIndexChanged, this, [this]() { scheduleSave(); });
     connect(m_controller, &AppController::configurationSaved, this, [this]() { reloadFromController(); });
@@ -135,11 +136,17 @@ QWidget *SettingsWindow::buildAiPage()
     m_apiKey->setPlaceholderText(AppStrings::keepApiKeyPlaceholder());
     m_apiEnvName = new QLineEdit(page); m_apiEnvName->setPlaceholderText(AppStrings::apiKeyEnvExample());
     m_autoAi = new QCheckBox(AppStrings::autoAiText(), page);
+    m_aiNicknameExampleCount = new QSpinBox(page);
+    m_aiNicknameExampleCount->setRange(0, 50);
+    m_aiNicknameExampleCount->setSuffix(QStringLiteral(" 个"));
+    m_aiNicknameExampleCount->setSpecialValueText(QStringLiteral("关闭"));
+    m_aiNicknameExampleCount->setToolTip(AppStrings::aiNicknameExampleCountHint());
     form->addRow(AppStrings::providerLabel(), m_provider);
     form->addRow(AppStrings::endpointLabel(), m_endpoint);
     form->addRow(AppStrings::modelLabel(), m_model);
     form->addRow(AppStrings::apiKeyLabel(), m_apiKey);
     form->addRow(AppStrings::apiKeyEnvLabel(), m_apiEnvName);
+    form->addRow(AppStrings::aiNicknameExampleCountLabel(), m_aiNicknameExampleCount);
     form->addRow(m_autoAi);
     auto *keys = new QHBoxLayout;
     auto *saveKey = new QPushButton(AppStrings::saveApiKeyButton(), page);
@@ -198,6 +205,7 @@ void SettingsWindow::reloadFromController()
     m_displaySize->setCurrentIndex(index < 0 ? 2 : index);
     m_endpoint->setText(config.aiEndpoint); m_model->setText(config.aiModel);
     m_apiEnvName->setText(config.apiKeyEnvName); m_autoAi->setChecked(config.autoAi);
+    m_aiNicknameExampleCount->setValue(config.aiNicknameExampleCount);
     m_galleryPath->setText(m_controller->galleryPath());
     index = m_cacheSize->findData(config.thumbnailCacheSize);
     m_cacheSize->setCurrentIndex(index < 0 ? 2 : index);
@@ -228,6 +236,7 @@ void SettingsWindow::collect(AppConfig &config)
     config.autoPaste = m_autoPaste->isChecked();
     config.aiEndpoint = m_endpoint->text(); config.aiModel = m_model->text();
     config.apiKeyEnvName = m_apiEnvName->text(); config.autoAi = m_autoAi->isChecked();
+    config.aiNicknameExampleCount = m_aiNicknameExampleCount->value();
     config.galleryPath = m_galleryPath->text();
     config.thumbnailCacheSize = m_cacheSize->currentData().toInt();
 }

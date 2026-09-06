@@ -12,6 +12,7 @@
 #include <QImageReader>
 #include <QTimer>
 #include <QScopeGuard>
+#include <QSet>
 #include <QThread>
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentRun>
@@ -185,20 +186,37 @@ void AppController::handleCapture(const CapturedImage &image)
 }
 
 // 优先使用配置的环境变量密钥，存在已保存密钥时再以凭据管理器值覆盖。
-AiSettings AppController::aiSettings() const
+AiSettings AppController::aiSettings()
 {
     AiSettings settings;
     settings.endpoint = m_config.aiEndpoint;
     settings.model = m_config.aiModel;
+    settings.nicknameExampleCount = m_config.aiNicknameExampleCount;
     settings.timeoutSeconds = 30;
-    if (!m_config.apiKeyEnvName.trimmed().isEmpty())
-        settings.apiKey = qEnvironmentVariable(qPrintable(m_config.apiKeyEnvName.trimmed()));
+    QSet<QString> seenNicknames;
+    const auto groupedNicknames = m_database.nicknames();
+    for (auto group = groupedNicknames.cbegin(); group != groupedNicknames.cend(); ++group) {
+        for (const NicknameRecord &record : group.value()) {
+            const QString key = record.normalized.trimmed();
+            if (key.isEmpty() || seenNicknames.contains(key))
+                continue;
+            seenNicknames.insert(key);
+            settings.nicknameCandidates.append(record.nickname.trimmed());
+        }
+    }
+    if (!m_config.apiKeyEnvName.trimmed().isEmpty()) {
+        settings.apiKey = qEnvironmentVariable(qPrintable(m_config.apiKeyEnvName.trimmed())).trimmed();
+        if (!settings.apiKey.isEmpty())
+            settings.apiKeySource = QStringLiteral("environment");
+    }
     if (!m_config.hasStoredApiKey)
         return settings;
     QString credential;
     readWindowsCredential(QLatin1String(kApiKeyTarget), credential);
-    if (!credential.isEmpty())
-        settings.apiKey = credential;
+    if (!credential.isEmpty()) {
+        settings.apiKey = credential.trimmed();
+        settings.apiKeySource = QStringLiteral("windows-credential");
+    }
     return settings;
 }
 
@@ -452,7 +470,7 @@ bool AppController::storeApiKey(const QString &secret, QString *error)
         m_config.hasStoredApiKey = false;
         return true;
     }
-    if (!writeWindowsCredential(QLatin1String(kApiKeyTarget), secret)) {
+    if (!writeWindowsCredential(QLatin1String(kApiKeyTarget), secret.trimmed())) {
         if (error)
             *error = QStringLiteral("写入Windows凭据管理器失败。");
         return false;

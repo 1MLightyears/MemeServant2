@@ -38,6 +38,8 @@ private:
     void applyResult(const QString &nickname);
     /// 显示失败状态并把详细原因放入输入框提示。
     void applyFailure(const QString &message);
+    /// 把 Provider 请求阶段转换为输入框中的就地状态提示。
+    void applyStage(OpenAiCompatibleProvider::RequestStage stage);
     /// 根据当前快捷键和状态生成多行编辑框 placeholder。
     void updatePlaceholder(const QString &status = QString());
     /// 从捕获载荷解码并在顶部显示等比例缩略图。

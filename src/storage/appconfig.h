@@ -27,6 +27,7 @@ struct AppConfig
     QString apiKeyEnvName;
     bool hasStoredApiKey = false;
     bool autoAi = false;
+    int aiNicknameExampleCount = 8;
     int thumbnailCacheSize = 256;
 
     /// 将空图库路径解析为程序目录下的 memes 子目录。

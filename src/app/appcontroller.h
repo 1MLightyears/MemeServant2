@@ -73,7 +73,7 @@ private:
     /// 在后台线程扫描并生成缺失的缩略图缓存。
     void startThumbnailScan();
     /// 合并环境变量和 Windows 凭据中的 AI 密钥配置。
-    AiSettings aiSettings() const;
+    AiSettings aiSettings();
 
     ConfigStore m_configStore;
     AppConfig m_config;

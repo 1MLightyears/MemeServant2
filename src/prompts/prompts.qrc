@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/prompts">
+        <file alias="vision_nickname.txt">vision_nickname.txt</file>
+    </qresource>
+</RCC>

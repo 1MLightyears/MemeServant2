@@ -68,6 +68,7 @@ private:
     QLineEdit *m_apiKey = nullptr;
     QLineEdit *m_apiEnvName = nullptr;
     QCheckBox *m_autoAi = nullptr;
+    QSpinBox *m_aiNicknameExampleCount = nullptr;
     QLineEdit *m_galleryPath = nullptr;
     QComboBox *m_cacheSize = nullptr;
     QTimer *m_autoSaveTimer = nullptr;

@@ -95,6 +95,8 @@ AppConfig ConfigStore::load()
     config.apiKeyEnvName = object.value(QStringLiteral("apiKeyEnvName")).toString();
     config.hasStoredApiKey = object.value(QStringLiteral("hasStoredApiKey")).toBool(false);
     config.autoAi = object.value(QStringLiteral("autoAi")).toBool(false);
+    config.aiNicknameExampleCount = qBound(
+        0, object.value(QStringLiteral("aiNicknameExampleCount")).toInt(8), 50);
     config.thumbnailCacheSize = object.value(QStringLiteral("thumbnailCacheSize")).toInt(256);
     m_activePath = file.fileName();
     return config;
@@ -124,6 +126,7 @@ bool ConfigStore::save(AppConfig &config, QString *error)
     object.insert(QStringLiteral("apiKeyEnvName"), config.apiKeyEnvName);
     object.insert(QStringLiteral("hasStoredApiKey"), config.hasStoredApiKey);
     object.insert(QStringLiteral("autoAi"), config.autoAi);
+    object.insert(QStringLiteral("aiNicknameExampleCount"), config.aiNicknameExampleCount);
     object.insert(QStringLiteral("thumbnailCacheSize"), config.thumbnailCacheSize);
 
     QFileInfo info(path);

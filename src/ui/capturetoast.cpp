@@ -63,6 +63,8 @@ CaptureToast::CaptureToast(QWidget *parent)
     layout->addWidget(m_editor);
 
     m_provider = new OpenAiCompatibleProvider(this);
+    connect(m_provider, &OpenAiCompatibleProvider::stageChanged, this,
+            [this](OpenAiCompatibleProvider::RequestStage stage) { applyStage(stage); });
     connect(m_provider, &OpenAiCompatibleProvider::succeeded, this, [this](const QString &value) { applyResult(value); });
     connect(m_provider, &OpenAiCompatibleProvider::failed, this, [this](const QString &reason) { applyFailure(reason); });
 }
@@ -169,9 +171,30 @@ void CaptureToast::beginRequest(bool manual)
         return;
     }
     m_manualRequest = manual;
-    updatePlaceholder(AppStrings::aiRunning());
-    m_editor->setToolTip(AppStrings::aiRunning());
+    applyStage(OpenAiCompatibleProvider::RequestStage::Preparing);
     m_provider->requestNickname(m_image.encoded, m_image.format, m_aiSettings);
+}
+
+// AI 状态始终显示在当前捕获浮窗内，避免系统通知打断连续输入。
+void CaptureToast::applyStage(OpenAiCompatibleProvider::RequestStage stage)
+{
+    QString status;
+    switch (stage) {
+    case OpenAiCompatibleProvider::RequestStage::Preparing:
+        status = AppStrings::aiPreparing();
+        break;
+    case OpenAiCompatibleProvider::RequestStage::Sending:
+        status = AppStrings::aiSending();
+        break;
+    case OpenAiCompatibleProvider::RequestStage::Recognizing:
+        status = AppStrings::aiRecognizing();
+        break;
+    case OpenAiCompatibleProvider::RequestStage::Processing:
+        status = AppStrings::aiProcessing();
+        break;
+    }
+    updatePlaceholder(status);
+    m_editor->setToolTip(status);
 }
 
 // 缓存 AI 结果，并仅在用户没有输入或明确手动请求时填入编辑器。
