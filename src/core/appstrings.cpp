@@ -1,7 +1,10 @@
 // 集中定义主要用户可见文案，避免界面层重复拼接相同提示。
 #include "core/appstrings.h"
 
-QString AppStrings::applicationName() { return QStringLiteral("MemeServant2"); }
+// 产品名和版本来自 CMake 生成的 appmetadata.h。
+#include <appmetadata.h>
+
+QString AppStrings::applicationName() { return QStringLiteral(MEMESERVANT2_DISPLAY_NAME); }
 QString AppStrings::startupFailureTitle() { return QStringLiteral("MemeServant2 启动失败"); }
 QString AppStrings::alreadyRunning() { return QStringLiteral("MemeServant2已在运行。"); }
 
@@ -94,10 +97,11 @@ QString AppStrings::changeGalleryButton() { return QStringLiteral("修改图库�
 QString AppStrings::importDataButton() { return QStringLiteral("导入MemeServant2数据"); }
 QString AppStrings::thumbnailCacheLabel() { return QStringLiteral("缩略图缓存最长边"); }
 QString AppStrings::pixelSize(int value) { return QStringLiteral("%1 px").arg(value); }
-// 组合关于页 HTML，并在运行时显示实际 Qt 版本。
+// 组合关于页 HTML；名称和版本由 CMake 配置生成，Qt 版本在运行时读取。
 QString AppStrings::aboutHtml()
 {
-    return QStringLiteral("<h3>MemeServant2</h3><p>Version 0.1.0<br>Qt %1<br>Windows x64</p>").arg(QT_VERSION_STR);
+    return QStringLiteral("<h3>" MEMESERVANT2_DISPLAY_NAME "</h3><p>Version " MEMESERVANT2_VERSION_STRING
+                          "<br>Qt %1<br>Windows x64</p>").arg(QT_VERSION_STR);
 }
 QString AppStrings::aiConfigurationError() { return QStringLiteral("AI配置错误"); }
 QString AppStrings::endpointInvalidMessage() { return QStringLiteral("Endpoint无效：结尾应该是一个带 /chat/completions 的URL。"); }

@@ -1,21 +1,54 @@
 # MemeServant2
 
-MemeServant2 是一个常驻 Windows 桌面的表情包管理工具。首版支持剪贴板图片捕获、nickname 保存与模糊搜索、原图写回系统剪贴板、自动粘贴、缩略图缓存、AI 识图和数据导入。
+MemeServant2 是一个常驻 Windows 桌面的表情包管理工具。复制图片后可以快速保存为表情包，之后通过全局快捷键按 nickname 搜索，并把原图写回剪贴板或直接粘贴到目标应用。
 
-## 开发构建
+## 功能
 
-当前开发环境使用 Qt 6.11.2 MSVC 2022 x64：
+- **剪贴板捕获**：检测剪贴板中的新图片，在光标附近弹出保存浮窗，可输入多个 nickname。
+- **AI 识图**：支持 OpenAI Compatible Chat Completions 服务，根据图片建议一个中文 nickname，也可从已有 nickname 中抽样匹配你的命名风格。
+- **模糊搜索**：nickname 支持精确匹配、前缀、包含和模糊子序列匹配，结果按匹配等级稳定排序。
+- **快捷候选栏**：全局快捷键唤出候选网格，支持键盘导航、悬停/选中后延迟预览原图、编辑 nickname 和删除表情包。
+- **回写剪贴板**：选择表情包时写回原始图片数据，尽量保留 PNG、GIF、JPEG 等原始格式。
+- **自动粘贴**：可选在恢复前台窗口后自动发送 `Ctrl+V`。
+- **本地图库**：原图、SQLite 索引、nickname、使用记录、缩略图缓存和删除暂存目录都保存在同一个图库目录中。
+- **数据导入**：支持导入旧 `.db` 图库或 `.zip` 归档，源库保持只读；ID 或文件名冲突时自动生成新标识。
+- **便携配置**：优先使用程序目录内的 `config.json`；目录不可写时回退到当前用户 AppData。
 
-```powershell
-cmd /c scripts\build-msvc.bat
-```
+## 快速开始
 
-构建完成后会自动把匹配的 Qt 6.11.2 运行库部署到 `build` 目录；请运行 `build\MemeServant2.exe`，不要手动把其他 Qt 或 Conda 目录加入优先搜索路径。
+1. 从 GitHub Release 下载 Windows x64 便携包。
+2. 解压后运行 `MemeServant2.exe`。
+3. 程序会进入系统托盘；复制一张图片即可开始捕获。
 
-## 便携包
+构建和打包方法见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package.ps1
-```
+## 默认快捷键
 
-产物为 `MemeServant2-0.1.0-windows-x64.zip`。
+| 操作 | 默认快捷键 |
+| --- | --- |
+| 唤出快捷候选栏 | `Ctrl+Alt+X` |
+| 保存捕获图片 | `Ctrl+S` |
+| 取消捕获 | `Esc` |
+| AI 识图 | `Alt+A` |
+
+所有快捷键都可以在设置中修改。
+
+## 使用方式
+
+- 从托盘菜单打开设置、暂停/恢复图片捕获或退出程序。
+- 复制图片后，在捕获浮窗中输入 nickname；每行一个 nickname，确认后图片会写入图库。
+- 使用全局快捷键唤出快捷栏，输入 nickname 搜索，选择候选后写回剪贴板。
+- 在候选项上右键可以编辑 nickname 或删除整个表情包；删除会同时清理关联索引、原图和缩略图。
+- 在“AI 识图”设置页填写 Endpoint 和 Model，保存 API Key 后即可使用 AI 建议。默认不会自动发送图片，可按需开启“总是将捕获图片发送给 AI 识图”。
+
+## 存储与隐私
+
+- 图库默认位于程序目录下的 `memes/`；也可在设置中指定其他目录。
+- 图库内常见内容包括：
+  - `memeservant2.db`：表情包与 nickname 索引
+  - 原图文件
+  - `.thumbnails/`：缩略图缓存
+  - `.trash/`：删除操作的安全暂存目录
+  - `.backup/`：数据库 schema 迁移前的备份
+- 配置保存在 `config.json`；API Key 不写入配置文件，而是保存在 Windows 凭据管理器中。
+- 只有启用 AI 识图时，当前捕获的图片才会发送到你配置的 AI 服务端；程序不会因此上传本地图库。

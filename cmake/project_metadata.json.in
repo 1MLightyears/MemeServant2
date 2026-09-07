@@ -1,0 +1,9 @@
+{
+  "displayName": "@MEMESERVANT2_DISPLAY_NAME@",
+  "version": "@PROJECT_VERSION@",
+  "versionMajor": "@PROJECT_VERSION_MAJOR@",
+  "versionMinor": "@PROJECT_VERSION_MINOR@",
+  "versionPatch": "@PROJECT_VERSION_PATCH@",
+  "packagePlatform": "@MEMESERVANT2_PACKAGE_PLATFORM@",
+  "databaseSchemaVersion": @MEMESERVANT2_DB_SCHEMA_VERSION@
+}

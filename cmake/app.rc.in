@@ -1,0 +1,34 @@
+// Windows exe 图标与版本资源；路径和版本号由 CMakeLists.txt 注入。
+#include <windows.h>
+
+IDI_ICON1 ICON "@MEMESERVANT2_ICON_ICO@"
+
+// VERSIONINFO 让任务管理器、通知中心显示正确的应用名；FILEVERSION 跟随
+// ProjectConfig.cmake 的版本号，替换图标或发版时同步提升版本号，
+// 配合 scripts/refresh-icon.ps1 可以更可靠地让 shell 图标缓存失效。
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "FileDescription", "@MEMESERVANT2_DISPLAY_NAME@"
+            VALUE "FileVersion", "@PROJECT_VERSION@.0"
+            VALUE "InternalName", "@MEMESERVANT2_DISPLAY_NAME@"
+            VALUE "OriginalFilename", "MemeServant2.exe"
+            VALUE "ProductName", "@MEMESERVANT2_DISPLAY_NAME@"
+            VALUE "ProductVersion", "@PROJECT_VERSION@.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

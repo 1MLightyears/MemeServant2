@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MemeServant2 VERSION 0.1.0 LANGUAGES CXX)
+# ProjectConfig.cmake is the only editing source for product metadata; the two
+# configure_file() calls below convert it into formats used by C++ and PowerShell.
+include(cmake/ProjectConfig.cmake)
+
+project(MemeServant2 VERSION ${MEMESERVANT2_VERSION} LANGUAGES CXX)
+
+# appmetadata.h supplies compile-time constants to C++ targets.
+configure_file(cmake/appmetadata.h.in "${CMAKE_BINARY_DIR}/generated/appmetadata.h" @ONLY)
+# project_metadata.json is regenerated during configure and consumed by package.ps1.
+configure_file(cmake/project_metadata.json.in "${CMAKE_BINARY_DIR}/project_metadata.json" @ONLY)
 
 if(MSVC)
     # CMake 4.0 misdecodes the localized MSVC /showIncludes prefix on this toolchain,
@@ -14,7 +23,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS Concurrent Network Sql Widgets)
+find_package(Qt6 ${MEMESERVANT2_QT_MINIMUM} REQUIRED COMPONENTS Concurrent Network Sql Widgets)
 
 if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE
@@ -45,6 +54,7 @@ qt_add_executable(MemeServant2 WIN32
     src/platforms/win/winwindoweffects.cpp
     src/ai/openaicompatibleprovider.cpp
     src/prompts/prompts.qrc
+    src/resources/app.qrc
     src/thumbnail/thumbnaillistener.cpp
     src/app/appcontroller.cpp
     src/ui/settingswindow.cpp
@@ -53,6 +63,17 @@ qt_add_executable(MemeServant2 WIN32
     src/ui/nicknameeditdialog.cpp
     src/ui/previewpopup.cpp
 )
+
+if(WIN32)
+    # Windows 资源编译器把 icon.ico 嵌入 exe；Qt 端从 qrc 读取同一个 icon.ico。
+    enable_language(RC)
+    set(MEMESERVANT2_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/icon.ico")
+    configure_file(cmake/app.rc.in "${CMAKE_BINARY_DIR}/generated/app.rc" @ONLY)
+    # rc.exe 的依赖不被 Ninja 追踪；显式声明 .ico 依赖，替换图标后强制重编资源。
+    set_source_files_properties("${CMAKE_BINARY_DIR}/generated/app.rc" PROPERTIES
+        OBJECT_DEPENDS "${MEMESERVANT2_ICON_ICO}")
+    target_sources(MemeServant2 PRIVATE "${CMAKE_BINARY_DIR}/generated/app.rc")
+endif()
 
 if(WIN32)
     # 构建目录必须自带匹配版本的Qt运行库，避免从Conda等路径加载旧DLL。
@@ -64,12 +85,13 @@ if(WIN32)
                 --no-opengl-sw
                 --no-quick-import
                 "$<TARGET_FILE:MemeServant2>"
-        COMMENT "正在部署Qt 6.11.2运行库到构建目录"
+        COMMENT "正在部署Qt运行库到构建目录"
         VERBATIM
     )
 endif()
 
 target_include_directories(MemeServant2 PRIVATE src)
+target_include_directories(MemeServant2 PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(MemeServant2 PRIVATE
     Qt6::Concurrent
     Qt6::Network

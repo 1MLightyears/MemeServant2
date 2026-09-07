@@ -3,12 +3,9 @@
 
 #include <QApplication>
 #include <QAction>
-#include <QColor>
-#include <QFont>
+#include <QIcon>
 #include <QMenu>
 #include <QMessageBox>
-#include <QPainter>
-#include <QPixmap>
 #include <QSystemTrayIcon>
 #include <QTimer>
 
@@ -18,23 +15,10 @@
 #include "ui/settingswindow.h"
 
 namespace {
-// 生成托盘使用的简单“M”图标，避免依赖外部资源文件。
+// 托盘、窗口与通知统一使用 qrc 打包的 icon.ico；exe 图标由 Windows 资源文件嵌入同一文件。
 QIcon applicationTrayIcon()
 {
-    QPixmap pixmap(64, 64);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setBrush(QColor(0, 120, 215));
-    painter.setPen(Qt::NoPen);
-    painter.drawRoundedRect(4, 4, 56, 56, 16, 16);
-    painter.setPen(Qt::white);
-    QFont font = painter.font();
-    font.setBold(true);
-    font.setPixelSize(34);
-    painter.setFont(font);
-    painter.drawText(pixmap.rect(), Qt::AlignCenter, QStringLiteral("M"));
-    return QIcon(pixmap);
+    return QIcon(QStringLiteral(":/icons/icon.ico"));
 }
 }
 
@@ -75,7 +59,7 @@ bool Application::start()
             [this](const QString &title, const QString &message, bool withSound) {
                 if (withSound)
                     QApplication::beep();
-                m_tray->showMessage(title, message, QSystemTrayIcon::Information, 4000);
+                m_tray->showMessage(title, message, applicationTrayIcon(), 4000);
             });
     connect(m_controller, &AppController::databaseErrorOccurred, this, [this](const QString &message) {
         QMessageBox::critical(nullptr, AppStrings::databaseErrorTitle(),
@@ -87,10 +71,10 @@ bool Application::start()
         if (m_controller->startupHotkeyConflict()) {
             QApplication::beep();
             m_tray->showMessage(AppStrings::applicationName(), AppStrings::globalHotkeyUnavailable(),
-                                QSystemTrayIcon::Warning, 6000);
+                                applicationTrayIcon(), 6000);
         } else {
             m_tray->showMessage(AppStrings::applicationName(), AppStrings::readyNotification(),
-                                QSystemTrayIcon::Information, 4000);
+                                applicationTrayIcon(), 4000);
         }
     });
     return true;

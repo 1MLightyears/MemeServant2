@@ -8,6 +8,9 @@
 #include <QSqlError>
 #include <QSqlQuery>
 
+// 目标schema版本由 cmake/ProjectConfig.cmake 经 CMake 生成。
+#include <appmetadata.h>
+
 #include "core/nicknameutils.h"
 #include "core/appstrings.h"
 #include "storage/logservice.h"
@@ -58,7 +61,7 @@ QSqlDatabase DatabaseService::database() const
     return QSqlDatabase::database(m_connectionName);
 }
 
-// 创建 schema_version，并将空数据库一次性迁移到版本 1。
+// 创建 schema_version，并将空数据库一次性迁移到当前配置的版本。
 bool DatabaseService::ensureSchema(QString *error)
 {
     QSqlDatabase databaseHandle = database();
@@ -84,11 +87,11 @@ bool DatabaseService::ensureSchema(QString *error)
         }
         return false;
     }
-    if (version >= 1)
+    if (version >= MEMESERVANT2_DB_SCHEMA_VERSION)
         return true;
 
     // 空库首次迁移必须先备份，再在一个事务中创建全部表和版本记录。
-    if (!createBackup(1, error))
+    if (!createBackup(MEMESERVANT2_DB_SCHEMA_VERSION, error))
         return false;
     if (!query.exec(QStringLiteral("BEGIN IMMEDIATE TRANSACTION"))) {
         if (error)
@@ -115,7 +118,7 @@ bool DatabaseService::ensureSchema(QString *error)
         query.exec(QStringLiteral("DELETE FROM schema_version")) &&
         query.prepare(QStringLiteral("INSERT INTO schema_version(version) VALUES(:version)"));
     if (success) {
-        query.bindValue(QStringLiteral(":version"), 1);
+        query.bindValue(QStringLiteral(":version"), MEMESERVANT2_DB_SCHEMA_VERSION);
         success = query.exec();
     }
     if (success)
@@ -128,7 +131,8 @@ bool DatabaseService::ensureSchema(QString *error)
         LogService::instance().error(QStringLiteral("Schema迁移失败"));
         return false;
     }
-    LogService::instance().info(QStringLiteral("数据库schema升级到版本1"));
+    LogService::instance().info(
+        QStringLiteral("数据库schema升级到版本%1").arg(MEMESERVANT2_DB_SCHEMA_VERSION));
     return true;
 }
 

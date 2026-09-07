@@ -3,8 +3,11 @@
 
 #include <QCoreApplication>
 
+// 互斥体名称来自 cmake/ProjectConfig.cmake 经 CMake 生成的头文件。
+#include <appmetadata.h>
+
 namespace {
-constexpr wchar_t kMutexName[] = L"Local\\MemeServant2-0.1.0-SingleInstance";
+constexpr wchar_t kMutexName[] = MEMESERVANT2_SINGLE_INSTANCE_MUTEX_WIDE;
 constexpr wchar_t kWindowClass[] = L"MemeServant2SingleInstanceWindow";
 constexpr wchar_t kActivateMessage[] = L"MemeServant2.Activate.v1";
 }

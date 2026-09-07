@@ -1,10 +1,32 @@
 @echo off
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -no_logo
+setlocal
+
+rem Optional local file; it is Git-ignored so machine paths never enter the repo.
+if exist "%~dp0toolchain.bat" call "%~dp0toolchain.bat"
+
+if not defined MEMESERVANT2_VSDEVCMD (
+    echo MEMESERVANT2_VSDEVCMD is not set. See scripts\toolchain.bat.example.
+    exit /b 1
+)
+if not defined MEMESERVANT2_CMAKE (
+    echo MEMESERVANT2_CMAKE is not set. See scripts\toolchain.bat.example.
+    exit /b 1
+)
+if not defined MEMESERVANT2_NINJA (
+    echo MEMESERVANT2_NINJA is not set. See scripts\toolchain.bat.example.
+    exit /b 1
+)
+if not defined MEMESERVANT2_QT_ROOT (
+    echo MEMESERVANT2_QT_ROOT is not set. See scripts\toolchain.bat.example.
+    exit /b 1
+)
+
+call "%MEMESERVANT2_VSDEVCMD%" -arch=x64 -no_logo
 if errorlevel 1 exit /b 1
 
-"D:\Program Files\CMake\bin\cmake.exe" -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
-  -DCMAKE_MAKE_PROGRAM="D:\Qt\Tools\Ninja\ninja.exe" ^
-  -DCMAKE_PREFIX_PATH="D:\Qt\6.11.2\msvc2022_64"
+"%MEMESERVANT2_CMAKE%" -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+  -DCMAKE_MAKE_PROGRAM="%MEMESERVANT2_NINJA%" ^
+  -DCMAKE_PREFIX_PATH="%MEMESERVANT2_QT_ROOT%"
 if errorlevel 1 exit /b 1
 
-"D:\Qt\Tools\Ninja\ninja.exe" -C build
+"%MEMESERVANT2_NINJA%" -C build

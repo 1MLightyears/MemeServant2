@@ -1,5 +1,6 @@
 # 忽略本地构建产物和运行数据
 build/*
+scripts/toolchain.bat
 memes/
 config.json
 logs/

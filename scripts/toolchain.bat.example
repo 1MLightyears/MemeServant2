@@ -1,0 +1,9 @@
+@echo off
+rem Copy this file to scripts\toolchain.bat and update the paths for this machine.
+rem scripts\toolchain.bat is Git-ignored; never commit real local paths.
+
+set "MEMESERVANT2_VSDEVCMD=C:\Path\To\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
+set "MEMESERVANT2_CMAKE=C:\Path\To\CMake\bin\cmake.exe"
+set "MEMESERVANT2_NINJA=C:\Path\To\Ninja\ninja.exe"
+set "MEMESERVANT2_QT_ROOT=C:\Path\To\Qt\6.11.2\msvc2022_64"
+set "MEMESERVANT2_MSVC_REDIST_ROOT=C:\Path\To\VC\Redist\MSVC\<version>\x64\Microsoft.VC143.CRT"
