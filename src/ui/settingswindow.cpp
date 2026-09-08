@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeySequenceEdit>
 #include <QLabel>
@@ -90,14 +91,29 @@ QWidget *SettingsWindow::buildCapturePage()
     auto *page = new QWidget(this);
     auto *form = new QFormLayout(page);
     m_captureEnabled = new QCheckBox(AppStrings::listenClipboardText(), page);
+    // QSpinBox自带整数校验：非数字直接拒绝，空值/越界在失焦时收敛到边界(16~16384)，天然只允许正整数。
     m_maxWidth = new QSpinBox(page); m_maxWidth->setRange(16, 16384);
     m_maxHeight = new QSpinBox(page); m_maxHeight->setRange(16, 16384);
     m_saveShortcut = new QKeySequenceEdit(page);
     m_cancelShortcut = new QKeySequenceEdit(page);
     m_aiShortcut = new QKeySequenceEdit(page);
     form->addRow(m_captureEnabled);
-    form->addRow(AppStrings::maxWidthLabel(), m_maxWidth);
-    form->addRow(AppStrings::maxHeightLabel(), m_maxHeight);
+    // 分组框标题直接说明字段含义：剪贴板图片超过该长宽时跳过捕获；单位px放在输入框外。
+    auto *sizeGroup = new QGroupBox(AppStrings::captureSizeGroupTitle(), page);
+    auto *sizeRow = new QHBoxLayout(sizeGroup);
+    auto *lengthLabel = new QLabel(AppStrings::maxWidthLabel(), sizeGroup);
+    auto *widthLabel = new QLabel(AppStrings::maxHeightLabel(), sizeGroup);
+    auto *lengthUnit = new QLabel(AppStrings::pixelUnitLabel(), sizeGroup);
+    auto *widthUnit = new QLabel(AppStrings::pixelUnitLabel(), sizeGroup);
+    sizeRow->addWidget(lengthLabel);
+    sizeRow->addWidget(m_maxWidth);
+    sizeRow->addWidget(lengthUnit);
+    sizeRow->addSpacing(24);
+    sizeRow->addWidget(widthLabel);
+    sizeRow->addWidget(m_maxHeight);
+    sizeRow->addWidget(widthUnit);
+    sizeRow->addStretch();
+    form->addRow(sizeGroup);
     form->addRow(AppStrings::saveShortcutLabel(), m_saveShortcut);
     form->addRow(AppStrings::cancelShortcutLabel(), m_cancelShortcut);
     form->addRow(AppStrings::aiShortcutLabel(), m_aiShortcut);

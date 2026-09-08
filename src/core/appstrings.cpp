@@ -66,8 +66,9 @@ QString AppStrings::storagePage() { return QStringLiteral("存储"); }
 QString AppStrings::aboutPage() { return QStringLiteral("关于"); }
 QString AppStrings::autoStartText() { return QStringLiteral("开机启动"); }
 QString AppStrings::listenClipboardText() { return QStringLiteral("监听剪贴板新图片"); }
-QString AppStrings::maxWidthLabel() { return QStringLiteral("最大宽度"); }
-QString AppStrings::maxHeightLabel() { return QStringLiteral("最大高度"); }
+QString AppStrings::captureSizeGroupTitle() { return QStringLiteral("不捕获超过此尺寸的图片"); }
+QString AppStrings::maxWidthLabel() { return QStringLiteral("长"); }
+QString AppStrings::maxHeightLabel() { return QStringLiteral("宽"); }
 QString AppStrings::saveShortcutLabel() { return QStringLiteral("保存快捷键"); }
 QString AppStrings::cancelShortcutLabel() { return QStringLiteral("取消快捷键"); }
 QString AppStrings::aiShortcutLabel() { return QStringLiteral("AI快捷键"); }
@@ -97,6 +98,7 @@ QString AppStrings::changeGalleryButton() { return QStringLiteral("修改图库�
 QString AppStrings::importDataButton() { return QStringLiteral("导入MemeServant2数据"); }
 QString AppStrings::thumbnailCacheLabel() { return QStringLiteral("缩略图缓存最长边"); }
 QString AppStrings::pixelSize(int value) { return QStringLiteral("%1 px").arg(value); }
+QString AppStrings::pixelUnitLabel() { return QStringLiteral("px"); }
 // 组合关于页 HTML；名称和版本由 CMake 配置生成，Qt 版本在运行时读取。
 QString AppStrings::aboutHtml()
 {
