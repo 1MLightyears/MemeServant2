@@ -88,6 +88,9 @@ AppConfig ConfigStore::load()
         rows = 1;
     config.rows = qBound(1, rows, 8);
     config.thumbnailDisplaySize = object.value(QStringLiteral("thumbnailDisplaySize")).toInt(128);
+    // 关闭(0)或最长10秒之外的旧值、手改值一律收敛到合法范围。
+    config.thumbnailPreviewDelayMs = qBound(
+        0, object.value(QStringLiteral("thumbnailPreviewDelayMs")).toInt(1500), 10000);
     config.autoPaste = object.value(QStringLiteral("autoPaste")).toBool(true);
     config.aiProvider = object.value(QStringLiteral("aiProvider")).toString(QStringLiteral("OpenAI Compatible"));
     config.aiEndpoint = object.value(QStringLiteral("aiEndpoint")).toString();
@@ -119,6 +122,7 @@ bool ConfigStore::save(AppConfig &config, QString *error)
     object.insert(QStringLiteral("rows"), config.rows);
     object.insert(QStringLiteral("columns"), config.columns);
     object.insert(QStringLiteral("thumbnailDisplaySize"), config.thumbnailDisplaySize);
+    object.insert(QStringLiteral("thumbnailPreviewDelayMs"), config.thumbnailPreviewDelayMs);
     object.insert(QStringLiteral("autoPaste"), config.autoPaste);
     object.insert(QStringLiteral("aiProvider"), config.aiProvider);
     object.insert(QStringLiteral("aiEndpoint"), config.aiEndpoint);

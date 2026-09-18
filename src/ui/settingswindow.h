@@ -8,6 +8,7 @@
 
 class QLineEdit;
 class QSpinBox;
+class QDoubleSpinBox;
 class QCheckBox;
 class QKeySequenceEdit;
 class QComboBox;
@@ -56,6 +57,7 @@ private:
 
     AppController *m_controller = nullptr;
     QCheckBox *m_startup = nullptr;
+    QDoubleSpinBox *m_previewDelay = nullptr;
     QCheckBox *m_captureEnabled = nullptr;
     QSpinBox *m_maxWidth = nullptr;
     QSpinBox *m_maxHeight = nullptr;

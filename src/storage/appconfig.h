@@ -20,6 +20,8 @@ struct AppConfig
     int rows = 1;
     int columns = 3;
     int thumbnailDisplaySize = 128;
+    /// 鼠标在候选缩略图上停留多久后显示原图预览；0 表示关闭悬停预览。
+    int thumbnailPreviewDelayMs = 1500;
     bool autoPaste = true;
     QString aiProvider = QStringLiteral("OpenAI Compatible");
     QString aiEndpoint;

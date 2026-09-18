@@ -65,6 +65,11 @@ QString AppStrings::aiPage() { return QStringLiteral("AI识图"); }
 QString AppStrings::storagePage() { return QStringLiteral("存储"); }
 QString AppStrings::aboutPage() { return QStringLiteral("关于"); }
 QString AppStrings::autoStartText() { return QStringLiteral("开机启动"); }
+QString AppStrings::thumbnailPreviewDelayLabel() { return QStringLiteral("悬停预览延迟"); }
+QString AppStrings::thumbnailPreviewDelayHint()
+{
+    return QStringLiteral("鼠标在候选缩略图上停留该时长后放大显示原图；设为0秒可关闭预览。");
+}
 QString AppStrings::listenClipboardText() { return QStringLiteral("监听剪贴板新图片"); }
 QString AppStrings::captureSizeGroupTitle() { return QStringLiteral("不捕获超过此尺寸的图片"); }
 QString AppStrings::maxWidthLabel() { return QStringLiteral("长"); }

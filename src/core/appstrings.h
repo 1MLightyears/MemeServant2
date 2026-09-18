@@ -74,6 +74,8 @@ QString globalHotkeyLabel();
 QString candidateRowsLabel();
 QString candidateColumnsLabel();
 QString thumbnailDisplayLabel();
+QString thumbnailPreviewDelayLabel();
+QString thumbnailPreviewDelayHint();
 QString autoPasteText();
 QString providerLabel();
 QString endpointLabel();

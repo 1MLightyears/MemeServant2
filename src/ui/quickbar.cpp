@@ -1,6 +1,7 @@
 // 快捷栏关联窗口不会导致主浮窗误关闭；空查询按最近使用排序。
 #include "ui/quickbar.h"
 
+#include <QCursor>
 #include <QEvent>
 #include <QEnterEvent>
 #include <QFileInfo>
@@ -147,8 +148,13 @@ QuickBar::QuickBar(QWidget *parent)
     layout->addWidget(m_search); layout->addWidget(m_candidateHost);
     m_previewTimer.setSingleShot(true);
     connect(&m_previewTimer, &QTimer::timeout, this, [this]() {
-        if (m_previewAllowed && isVisible() && m_current >= 0 && m_current < m_results.size())
-            m_preview->showOriginal(sourcePath(m_results.at(m_current).meme));
+        if (!m_previewAllowed || !isVisible() || m_current < 0 || m_current >= m_results.size())
+            return;
+        // 以当前卡片为锚点，让预览贴在缩略图旁而不是整个快捷栏旁。
+        const QuickCandidate *card = m_current < m_cards.size() ? m_cards.at(m_current) : nullptr;
+        const QRect anchor = card ? QRect(card->mapToGlobal(QPoint(0, 0)), card->size())
+                                  : QRect(QCursor::pos(), QSize(1, 1));
+        m_preview->showOriginal(sourcePath(m_results.at(m_current).meme), anchor);
     });
     m_preview = new PreviewPopup(this);
 }
@@ -297,7 +303,7 @@ void QuickBar::rebuild(const QString &query)
     adjustSize();
 }
 
-// 更新选中边框，并为当前候选启动三秒后的原图预览。
+// 更新选中边框，并按“常规”页的悬停延迟为当前候选启动原图预览。
 void QuickBar::setCurrent(int index)
 {
     m_current = index;
@@ -305,8 +311,10 @@ void QuickBar::setCurrent(int index)
         m_cards.at(item)->setActive(item == index);
     m_preview->closePreview();
     m_previewTimer.stop();
-    if (m_previewAllowed && isVisible() && index >= 0 && index < m_results.size())
-        m_previewTimer.start(3000);
+    if (m_previewAllowed && isVisible() && index >= 0 && index < m_results.size() &&
+        m_config.thumbnailPreviewDelayMs > 0) {
+        m_previewTimer.start(m_config.thumbnailPreviewDelayMs);
+    }
 }
 
 // 关闭快捷栏并把当前候选 ID 交给控制器写回剪贴板。

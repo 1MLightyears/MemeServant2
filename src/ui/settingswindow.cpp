@@ -4,6 +4,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -48,6 +49,7 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     // 所有普通设置变化都进入同一个防抖保存入口。
     connect(m_autoSaveTimer, &QTimer::timeout, this, &SettingsWindow::save);
     connect(m_startup, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
+    connect(m_previewDelay, &QDoubleSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_captureEnabled, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
     connect(m_maxWidth, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_maxHeight, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
@@ -79,13 +81,22 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     reloadFromController();
 }
 
-// 创建开机启动开关。
+// 创建开机启动开关和候选缩略图悬停预览延迟。
 QWidget *SettingsWindow::buildGeneralPage()
 {
     auto *page = new QWidget(this);
     auto *form = new QFormLayout(page);
     m_startup = new QCheckBox(AppStrings::autoStartText(), page);
     form->addRow(m_startup);
+    // 秒为单位的浮点输入：0秒即关闭悬停预览，其余为停留时长。
+    m_previewDelay = new QDoubleSpinBox(page);
+    m_previewDelay->setRange(0.0, 10.0);
+    m_previewDelay->setSingleStep(0.1);
+    m_previewDelay->setDecimals(1);
+    m_previewDelay->setSuffix(QStringLiteral(" 秒"));
+    m_previewDelay->setSpecialValueText(QStringLiteral("关闭"));
+    m_previewDelay->setToolTip(AppStrings::thumbnailPreviewDelayHint());
+    form->addRow(AppStrings::thumbnailPreviewDelayLabel(), m_previewDelay);
     return page;
 }
 
@@ -232,6 +243,7 @@ void SettingsWindow::reloadFromController()
     m_updating = true;
     const AppConfig config = m_controller->config();
     m_startup->setChecked(config.startup);
+    m_previewDelay->setValue(config.thumbnailPreviewDelayMs / 1000.0);
     m_captureEnabled->setChecked(config.captureEnabled);
     m_maxWidth->setValue(config.maxWidth);
     m_maxHeight->setValue(config.maxHeight);
@@ -265,6 +277,7 @@ void SettingsWindow::collect(AppConfig &config)
     const AppConfig old = m_controller->config();
     config = old;
     config.startup = m_startup->isChecked();
+    config.thumbnailPreviewDelayMs = qRound(m_previewDelay->value() * 1000.0);
     config.captureEnabled = m_captureEnabled->isChecked();
     config.maxWidth = m_maxWidth->value(); config.maxHeight = m_maxHeight->value();
     if (!m_saveShortcut->keySequence().isEmpty()) config.saveShortcut = m_saveShortcut->keySequence().toString();
