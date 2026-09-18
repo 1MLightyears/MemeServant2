@@ -4,7 +4,7 @@
 # Keep machine-specific tool paths out of this file.
 
 set(MEMESERVANT2_DISPLAY_NAME "MemeServant2")
-set(MEMESERVANT2_VERSION "1.0.0")
+set(MEMESERVANT2_VERSION "1.0.1")
 set(MEMESERVANT2_QT_MINIMUM "6.11")
 set(MEMESERVANT2_PACKAGE_PLATFORM "windows-x64")
 set(MEMESERVANT2_DB_SCHEMA_VERSION 1)

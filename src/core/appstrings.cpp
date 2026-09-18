@@ -93,9 +93,10 @@ QString AppStrings::keepApiKeyPlaceholder() { return QStringLiteral("留空表�
 QString AppStrings::storedApiKeyPlaceholder() { return QStringLiteral("已保存在Windows凭据管理器"); }
 QString AppStrings::clearApiKeyButton() { return QStringLiteral("清除API_KEY"); }
 QString AppStrings::saveApiKeyButton() { return QStringLiteral("保存API_KEY"); }
-QString AppStrings::galleryDirectoryLabel() { return QStringLiteral("当前memes/目录"); }
-QString AppStrings::changeGalleryButton() { return QStringLiteral("修改图库路径"); }
-QString AppStrings::importDataButton() { return QStringLiteral("导入MemeServant2数据"); }
+QString AppStrings::galleryDirectoryLabel() { return QStringLiteral("当前表情包目录"); }
+QString AppStrings::galleryDirectoryHint() { return QStringLiteral("memeservant2.db所在的目录"); }
+QString AppStrings::changeGalleryHint() { return QStringLiteral("修改图库路径"); }
+QString AppStrings::importDataHint() { return QStringLiteral("导入MemeServant2数据"); }
 QString AppStrings::thumbnailCacheLabel() { return QStringLiteral("缩略图缓存最长边"); }
 QString AppStrings::pixelSize(int value) { return QStringLiteral("%1 px").arg(value); }
 QString AppStrings::pixelUnitLabel() { return QStringLiteral("px"); }

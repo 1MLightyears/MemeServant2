@@ -11,6 +11,7 @@ class QSpinBox;
 class QCheckBox;
 class QKeySequenceEdit;
 class QComboBox;
+class QPushButton;
 class QTimer;
 
 class AppController;
@@ -25,6 +26,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    /// 系统配色方案切换时重新应用主题并重着色图标。
+    void changeEvent(QEvent *event) override;
 
 private slots:
     bool save();
@@ -48,6 +51,8 @@ private:
     QWidget *buildAboutPage();
     /// 从控件收集配置，保留未在界面展示的字段。
     void collect(AppConfig &config);
+    /// 按当前配色方案重绘存储页图标按钮。
+    void refreshStorageIcons();
 
     AppController *m_controller = nullptr;
     QCheckBox *m_startup = nullptr;
@@ -70,6 +75,8 @@ private:
     QCheckBox *m_autoAi = nullptr;
     QSpinBox *m_aiNicknameExampleCount = nullptr;
     QLineEdit *m_galleryPath = nullptr;
+    QPushButton *m_galleryBrowse = nullptr;
+    QPushButton *m_importButton = nullptr;
     QComboBox *m_cacheSize = nullptr;
     QTimer *m_autoSaveTimer = nullptr;
     bool m_updating = false;

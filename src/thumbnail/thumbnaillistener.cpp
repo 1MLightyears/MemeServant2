@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QImage>
 #include <QImageReader>
+#include <QThread>
 
 #include "storage/logservice.h"
 
@@ -15,6 +16,8 @@ void ThumbnailWorker::generate(const QVector<MemeRecord> &records, const QString
     if (!cacheDirectory.exists())
         cacheDirectory.mkpath(QStringLiteral("."));
     for (const MemeRecord &record : records) {
+        if (QThread::currentThread()->isInterruptionRequested())
+            break;
         const QString source = galleryPath + QLatin1Char('/') + record.fileName;
         const QString target = cacheDirectory.filePath(QString(record.fileName).section(QLatin1Char('.'), 0, -2)
                                                        + QStringLiteral(".png"));
@@ -33,10 +36,8 @@ void ThumbnailWorker::generate(const QVector<MemeRecord> &records, const QString
         displaySize.scale(maximumSide, maximumSide, Qt::KeepAspectRatio);
         if (displaySize.width() < image.width() || displaySize.height() < image.height())
             image = image.scaled(displaySize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        if (image.save(target, "PNG")) {
-            emit generated(record.id);
-        } else {
+        if (!image.save(target, "PNG"))
             LogService::instance().warning(QStringLiteral("缩略图写入失败"));
-        }
     }
+    emit finished();
 }

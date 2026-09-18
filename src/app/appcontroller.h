@@ -10,7 +10,6 @@
 #include "ai/openaicompatibleprovider.h"
 #include "clipboard/clipboardtypes.h"
 #include "core/models.h"
-#include "core/searchengine.h"
 #include "storage/appconfig.h"
 #include "storage/databaseservice.h"
 #include "storage/importservice.h"
@@ -60,25 +59,23 @@ signals:
     void quickbarRequested();
     void settingsRequested();
     void notificationShown(const QString &title, const QString &message, bool withSound);
-    void recordsChanged();
     void configurationSaved(const AppConfig &config);
     void databaseErrorOccurred(const QString &message);
     void importFinished(const ImportResult &result);
 
 private:
-    /// 从数据库刷新搜索索引，并按需启动缩略图扫描。
+    /// 从数据库刷新快捷栏索引，并按需启动缩略图扫描。
     void reloadRecords(bool scheduleThumbnails = true);
     /// 过滤无效或超尺寸图片后发出捕获信号。
     void handleCapture(const CapturedImage &image);
     /// 在后台线程扫描并生成缺失的缩略图缓存。
-    void startThumbnailScan();
+    void startThumbnailScan(const QVector<MemeRecord> &records);
     /// 合并环境变量和 Windows 凭据中的 AI 密钥配置。
     AiSettings aiSettings();
 
     ConfigStore m_configStore;
     AppConfig m_config;
     DatabaseService m_database;
-    SearchEngine m_searchEngine;
     WinClipboard *m_clipboard = nullptr;
     WinGlobalHotkey *m_hotkey = nullptr;
     WinSingleInstance *m_singleInstance = nullptr;

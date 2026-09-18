@@ -202,6 +202,14 @@ QString QuickBar::sourcePath(const MemeRecord &record) const
     return m_config.resolvedGalleryPath(QCoreApplication::applicationDirPath()) + QLatin1Char('/') + record.fileName;
 }
 
+// 返回与 ThumbnailWorker 输出规则一致的缩略图缓存路径。
+QString QuickBar::thumbnailPath(const MemeRecord &record) const
+{
+    return m_config.resolvedGalleryPath(QCoreApplication::applicationDirPath()) +
+           QStringLiteral("/.thumbnails/") + QFileInfo(record.fileName).completeBaseName() +
+           QStringLiteral(".png");
+}
+
 // 激活状态丢失时关闭预览；右键菜单或管理对话框期间暂不关闭。
 void QuickBar::changeEvent(QEvent *event)
 {
@@ -225,17 +233,31 @@ void QuickBar::rebuild(const QString &query)
     while (m_grid->count())
         m_grid->removeItem(m_grid->itemAt(0));
     m_results = m_engine.search(query, m_config.rows * m_config.columns);
-    // 每个结果加载一张缩略图，并把所有 nickname 渲染为可读标签。
+    // 有足够分辨率的缓存时优先读取；否则对原图按显示尺寸解码，避免整图解码。
     for (int index = 0; index < m_results.size(); ++index) {
         const SearchResult &result = m_results.at(index);
         auto *card = new QuickCandidate(result, m_config.thumbnailDisplaySize, m_candidateHost);
-        QImageReader thumbnailReader(sourcePath(result.meme));
+        const QSize displaySize(m_config.thumbnailDisplaySize, m_config.thumbnailDisplaySize);
+        const QString sourceFilePath = sourcePath(result.meme);
+        const QString cachedPath = thumbnailPath(result.meme);
+        const bool sourceExists = QFileInfo::exists(sourceFilePath);
+        const bool useCachedThumbnail = QFileInfo::exists(cachedPath) &&
+                                        (m_config.thumbnailCacheSize >= m_config.thumbnailDisplaySize ||
+                                         !sourceExists);
+        QImageReader thumbnailReader(useCachedThumbnail ? cachedPath : sourceFilePath);
         thumbnailReader.setAutoTransform(true);
-        if (result.meme.format == QLatin1String("gif"))
-            thumbnailReader.setFormat(QByteArrayLiteral("GIF"));
-        QImage thumbnail = thumbnailReader.read();
+        if (!useCachedThumbnail) {
+            if (result.meme.format == QLatin1String("gif"))
+                thumbnailReader.setFormat(QByteArrayLiteral("GIF"));
+            const QSize sourceSize = thumbnailReader.size();
+            if (sourceSize.isValid()) {
+                const QSize decodedSize = sourceSize.scaled(displaySize, Qt::KeepAspectRatio);
+                if (decodedSize.width() < sourceSize.width() || decodedSize.height() < sourceSize.height())
+                    thumbnailReader.setScaledSize(decodedSize);
+            }
+        }
+        const QImage thumbnail = thumbnailReader.read();
         if (!thumbnail.isNull()) {
-            const QSize displaySize(m_config.thumbnailDisplaySize, m_config.thumbnailDisplaySize);
             card->setPixmap(QPixmap::fromImage(thumbnail.scaled(displaySize, Qt::KeepAspectRatio,
                                                                 Qt::SmoothTransformation)));
         }

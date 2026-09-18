@@ -51,6 +51,8 @@ private:
     void showContextMenu(QuickCandidate *candidate, const QPoint &globalPosition);
     /// 返回表情包原图的绝对路径。
     QString sourcePath(const MemeRecord &record) const;
+    /// 返回表情包缩略图缓存的绝对路径。
+    QString thumbnailPath(const MemeRecord &record) const;
 
     AppConfig m_config;
     SearchEngine m_engine;

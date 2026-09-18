@@ -16,7 +16,8 @@ public:
     void generate(const QVector<MemeRecord> &records, const QString &galleryPath, int maximumSide);
 
 signals:
-    void generated(const QString &memeId);
+    /// 整批扫描结束（包括被中断提前结束）后发出，供调用方回收线程。
+    void finished();
 };
 
 #endif

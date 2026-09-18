@@ -23,7 +23,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 ${MEMESERVANT2_QT_MINIMUM} REQUIRED COMPONENTS Concurrent Network Sql Widgets)
+find_package(Qt6 ${MEMESERVANT2_QT_MINIMUM} REQUIRED COMPONENTS Concurrent Network Sql Svg Widgets)
 
 if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE
@@ -58,6 +58,7 @@ qt_add_executable(MemeServant2 WIN32
     src/thumbnail/thumbnaillistener.cpp
     src/app/appcontroller.cpp
     src/ui/settingswindow.cpp
+    src/ui/appstyle.cpp
     src/ui/capturetoast.cpp
     src/ui/quickbar.cpp
     src/ui/nicknameeditdialog.cpp
@@ -96,6 +97,7 @@ target_link_libraries(MemeServant2 PRIVATE
     Qt6::Concurrent
     Qt6::Network
     Qt6::Sql
+    Qt6::Svg
     Qt6::Widgets
 )
 

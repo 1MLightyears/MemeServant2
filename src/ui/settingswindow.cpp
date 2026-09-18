@@ -4,6 +4,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -20,12 +21,15 @@
 
 #include "app/appcontroller.h"
 #include "core/appstrings.h"
+#include "ui/appstyle.h"
 
 // 创建各设置页并将控件变化连接到防抖保存计时器。
 SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     : QMainWindow(parent), m_controller(controller)
 {
     setWindowTitle(AppStrings::settingsWindowTitle());
+    // 主题跟随系统配色；必须在构建页面前应用，保证所有控件一次到位。
+    AppStyle::applyTheme();
     resize(620, 520);
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
@@ -180,16 +184,36 @@ QWidget *SettingsWindow::buildStoragePage()
     auto *page = new QWidget(this);
     auto *form = new QFormLayout(page);
     m_galleryPath = new QLineEdit(page);
-    auto *browse = new QPushButton(AppStrings::changeGalleryButton(), page);
-    auto *import = new QPushButton(AppStrings::importDataButton(), page);
+    m_galleryPath->setToolTip(AppStrings::galleryDirectoryHint());
+    auto *galleryLabel = new QLabel(AppStrings::galleryDirectoryLabel(), page);
+    galleryLabel->setToolTip(AppStrings::galleryDirectoryHint());
+    galleryLabel->setBuddy(m_galleryPath);
+    // 原两个长按钮改为小号方形图标按钮；原文案转为tooltip，圆角由QSS统一绘制。
+    m_galleryBrowse = new QPushButton(page);
+    m_galleryBrowse->setObjectName(QStringLiteral("galleryBrowse"));
+    m_galleryBrowse->setToolTip(AppStrings::changeGalleryHint());
+    m_importButton = new QPushButton(page);
+    m_importButton->setObjectName(QStringLiteral("galleryImport"));
+    m_importButton->setToolTip(AppStrings::importDataHint());
+    for (QPushButton *button : {m_galleryBrowse, m_importButton}) {
+        // 图标16px，按钮24px：比图标大一圈；与行内输入框高度一致，表单标签自然垂直居中。
+        button->setProperty("iconButton", true);
+        button->setFixedSize(24, 24);
+        button->setIconSize(QSize(16, 16));
+        button->setFocusPolicy(Qt::TabFocus);
+    }
+    refreshStorageIcons();
     m_cacheSize = new QComboBox(page);
     for (int size : {64, 128, 256, 512, 1024}) m_cacheSize->addItem(AppStrings::pixelSize(size), size);
-    form->addRow(AppStrings::galleryDirectoryLabel(), m_galleryPath);
-    form->addRow(QString(), browse);
-    form->addRow(QString(), import);
+    auto *pathRow = new QHBoxLayout;
+    pathRow->setContentsMargins(0, 0, 0, 0);
+    pathRow->addWidget(m_galleryPath, 1);
+    pathRow->addWidget(m_galleryBrowse);
+    pathRow->addWidget(m_importButton);
+    form->addRow(galleryLabel, pathRow);
     form->addRow(AppStrings::thumbnailCacheLabel(), m_cacheSize);
-    connect(browse, &QPushButton::clicked, this, &SettingsWindow::chooseGallery);
-    connect(import, &QPushButton::clicked, this, &SettingsWindow::importGallery);
+    connect(m_galleryBrowse, &QPushButton::clicked, this, &SettingsWindow::chooseGallery);
+    connect(m_importButton, &QPushButton::clicked, this, &SettingsWindow::importGallery);
     return page;
 }
 
@@ -280,7 +304,7 @@ bool SettingsWindow::save()
 // 选择图库目录，并拒绝未经确认的非空目录。
 void SettingsWindow::chooseGallery()
 {
-    const QString directory = QFileDialog::getExistingDirectory(this, AppStrings::galleryDirectoryLabel(),
+    const QString directory = QFileDialog::getExistingDirectory(this, AppStrings::changeGalleryHint(),
                                                                 m_galleryPath->text());
     if (directory.isEmpty())
         return;
@@ -356,4 +380,23 @@ void SettingsWindow::closeEvent(QCloseEvent *event)
     }
     hide();
     event->ignore();
+}
+
+// 系统切换深浅色模式时，重新应用主题并用新前景色重绘SVG图标。
+void SettingsWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ThemeChange) {
+        AppStyle::applyTheme();
+        refreshStorageIcons();
+    }
+    QMainWindow::changeEvent(event);
+}
+
+// 用当前配色方案的图标颜色刷新存储页的两个图标按钮。
+void SettingsWindow::refreshStorageIcons()
+{
+    if (!m_galleryBrowse || !m_importButton)
+        return;
+    m_galleryBrowse->setIcon(AppStyle::themedIcon(QStringLiteral(":/icons/set.svg")));
+    m_importButton->setIcon(AppStyle::themedIcon(QStringLiteral(":/icons/import.svg")));
 }

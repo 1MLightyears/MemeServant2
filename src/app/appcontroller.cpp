@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QImage>
 #include <QBuffer>
 #include <QImageReader>
@@ -41,10 +42,11 @@ AppController::AppController(QObject *parent)
 {
 }
 
-// 先等待缩略图线程结束，再关闭仍存活的浮窗。
+// 先请求缩略图线程停止并等待结束，再关闭仍存活的浮窗。
 AppController::~AppController()
 {
     if (m_thumbnailThread) {
+        m_thumbnailThread->requestInterruption();
         m_thumbnailThread->quit();
         m_thumbnailThread->wait(3000);
     }
@@ -116,9 +118,6 @@ bool AppController::initialize(QString *error)
     LogService::instance().info(QStringLiteral("开始创建快捷栏"));
     m_quickBar = new QuickBar;
     m_quickBar->applyConfig(m_config);
-    connect(this, &AppController::recordsChanged, this, [this]() {
-        m_quickBar->updateRecords(m_database.memes(), m_database.nicknames());
-    });
     connect(m_quickBar, &QuickBar::memeSelected, this, [this](const QString &id) {
         QString selectionError;
         if (!selectMeme(id, &selectionError)) {
@@ -142,18 +141,19 @@ bool AppController::initialize(QString *error)
     return true;
 }
 
-// 将数据库快照同时推送给搜索引擎、快捷栏和缩略图任务。
+// 只查询一次数据库快照，并同时交给快捷栏和缩略图任务。
 void AppController::reloadRecords(bool scheduleThumbnails)
 {
     const QVector<MemeRecord> memes = m_database.memes();
-    m_searchEngine.setRecords(memes, m_database.nicknames());
-    emit recordsChanged();
+    const QHash<QString, QVector<NicknameRecord>> nicknames = m_database.nicknames();
+    if (m_quickBar)
+        m_quickBar->updateRecords(memes, nicknames);
     if (scheduleThumbnails && m_config.thumbnailCacheSize > 0)
-        startThumbnailScan();
+        startThumbnailScan(memes);
 }
 
-// 每次只允许一个 worker 存活，避免重复扫描和线程竞态。
-void AppController::startThumbnailScan()
+// 每次只允许一个 worker 存活；完成后线程退出并复位，后续变更可再次扫描。
+void AppController::startThumbnailScan(const QVector<MemeRecord> &records)
 {
     if (m_thumbnailThread)
         return;
@@ -161,15 +161,17 @@ void AppController::startThumbnailScan()
     m_thumbnailWorker = new ThumbnailWorker;
     m_thumbnailWorker->moveToThread(m_thumbnailThread);
     connect(m_thumbnailThread, &QThread::finished, m_thumbnailWorker, &QObject::deleteLater);
-    connect(m_thumbnailWorker, &ThumbnailWorker::generated, this, [this](const QString &) {
-        emit recordsChanged();
-    }, Qt::QueuedConnection);
+    connect(m_thumbnailWorker, &ThumbnailWorker::finished, m_thumbnailThread, &QThread::quit);
+    connect(m_thumbnailThread, &QThread::finished, this, [this]() {
+        m_thumbnailThread->deleteLater();
+        m_thumbnailThread = nullptr;
+        m_thumbnailWorker = nullptr;
+    });
     m_thumbnailThread->start();
-    const QVector<MemeRecord> memes = m_database.memes();
     const QString gallery = m_database.galleryPath();
     const int size = m_config.thumbnailCacheSize;
-    QMetaObject::invokeMethod(m_thumbnailWorker, [this, memes, gallery, size]() {
-        m_thumbnailWorker->generate(memes, gallery, size);
+    QMetaObject::invokeMethod(m_thumbnailWorker, [this, records, gallery, size]() {
+        m_thumbnailWorker->generate(records, gallery, size);
     }, Qt::QueuedConnection);
 }
 
