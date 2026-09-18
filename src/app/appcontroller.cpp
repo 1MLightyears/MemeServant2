@@ -8,7 +8,6 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QHash>
-#include <QImage>
 #include <QBuffer>
 #include <QImageReader>
 #include <QPair>
@@ -386,13 +385,19 @@ bool AppController::deleteMeme(const QString &memeId, QString *error)
 bool AppController::selectMeme(const QString &memeId, QString *error)
 {
     // 先确认数据库记录仍有原图，避免向剪贴板写入空载荷。
-    const QStringList paths = m_database.memeFilePaths(memeId);
-    if (paths.isEmpty() || !QFile::exists(paths.first())) {
+    MemeRecord record;
+    if (!m_database.findMeme(memeId, &record)) {
         if (error)
             *error = AppStrings::originalImageMissing();
         return false;
     }
-    QFile source(paths.first());
+    const QString sourcePath = m_database.galleryPath() + QLatin1Char('/') + record.fileName;
+    if (!QFile::exists(sourcePath)) {
+        if (error)
+            *error = AppStrings::originalImageMissing();
+        return false;
+    }
+    QFile source(sourcePath);
     if (!source.open(QIODevice::ReadOnly)) {
         if (error)
             *error = AppStrings::originalImageReadFailed(source.errorString());
@@ -400,18 +405,12 @@ bool AppController::selectMeme(const QString &memeId, QString *error)
     }
     CapturedImage image;
     image.encoded = source.readAll();
-    image.format = QFileInfo(paths.first()).suffix().toLower();
-    QImage decoded = QImage::fromData(image.encoded, image.format.toLatin1().constData());
-    if (decoded.isNull())
-        decoded = QImage::fromData(image.encoded);
-    image.width = decoded.width();
-    image.height = decoded.height();
-    image.isValid = !decoded.isNull();
-    if (!image.isValid) {
-        if (error)
-            *error = AppStrings::originalImageDecodeFailed();
-        return false;
-    }
+    image.format = QFileInfo(sourcePath).suffix().toLower();
+    // 宽高直接取索引里的既有记录，不必为了拿尺寸先解码一次整图；原图能否解码由
+    // writeImage 在写剪贴板前校验，失败时走的是同一套错误提示。
+    image.width = record.width;
+    image.height = record.height;
+    image.isValid = true;
     if (!m_clipboard->writeImage(image, error))
         return false;
     // 写回成功后再更新使用统计，并关闭候选界面。

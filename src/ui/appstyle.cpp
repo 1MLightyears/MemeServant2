@@ -79,6 +79,12 @@ void applyTheme()
         "QTabWidget::pane { border: 1px solid %3; border-radius: 4px; }"
         "QToolTip { background: %2; color: %1; border: 1px solid %3; padding: 2px; }")
         .arg(text, field, border, hover, pressed);
+    // 启动时和首次构造设置窗口时都会调用这里，而 Qt 不比较内容：同一条样式表再设一次
+    // 也会让全部控件重新 polish。只在内容真正变化（含深浅色切换）时才应用。
+    static QString appliedStyleSheet;
+    if (qss == appliedStyleSheet)
+        return;
+    appliedStyleSheet = qss;
     qApp->setStyleSheet(qss);
 }
 }

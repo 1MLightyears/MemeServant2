@@ -15,6 +15,27 @@
 #include "core/appstrings.h"
 #include "storage/logservice.h"
 
+namespace {
+// memes 表的列顺序在 memes() 与 findMeme() 之间共享，避免两处解析逻辑漂移。
+constexpr char kMemeColumns[] =
+    "id,file_name,format,width,height,created_at,last_used_at,use_count";
+
+// 按 kMemeColumns 的顺序读取当前行。
+MemeRecord readMemeRecord(const QSqlQuery &query)
+{
+    MemeRecord record;
+    record.id = query.value(0).toString();
+    record.fileName = query.value(1).toString();
+    record.format = query.value(2).toString();
+    record.width = query.value(3).toInt();
+    record.height = query.value(4).toInt();
+    record.createdAt = QDateTime::fromString(query.value(5).toString(), Qt::ISODateWithMs);
+    record.lastUsedAt = QDateTime::fromString(query.value(6).toString(), Qt::ISODateWithMs);
+    record.useCount = query.value(7).toInt();
+    return record;
+}
+}
+
 // 创建图库目录、打开固定连接名的 SQLite 数据库并执行 schema 检查。
 bool DatabaseService::open(const QString &galleryPath, QString *error)
 {
@@ -163,23 +184,37 @@ QVector<MemeRecord> DatabaseService::memes()
 {
     QVector<MemeRecord> records;
     QSqlQuery query(database());
-    if (!query.exec(QStringLiteral("SELECT id,file_name,format,width,height,created_at,last_used_at,use_count FROM memes ORDER BY id"))) {
+    if (!query.exec(QStringLiteral("SELECT ") + QLatin1String(kMemeColumns) +
+                    QStringLiteral(" FROM memes ORDER BY id"))) {
         LogService::instance().error(QStringLiteral("读取表情包索引失败"));
         return records;
     }
-    while (query.next()) {
-        MemeRecord record;
-        record.id = query.value(0).toString();
-        record.fileName = query.value(1).toString();
-        record.format = query.value(2).toString();
-        record.width = query.value(3).toInt();
-        record.height = query.value(4).toInt();
-        record.createdAt = QDateTime::fromString(query.value(5).toString(), Qt::ISODateWithMs);
-        record.lastUsedAt = QDateTime::fromString(query.value(6).toString(), Qt::ISODateWithMs);
-        record.useCount = query.value(7).toInt();
-        records.append(record);
-    }
+    while (query.next())
+        records.append(readMemeRecord(query));
     return records;
+}
+
+// 按主键查询单条记录；调用方用它取得文件名和已存尺寸，避免重新解码原图。
+bool DatabaseService::findMeme(const QString &memeId, MemeRecord *record) const
+{
+    if (!record)
+        return false;
+    QSqlQuery query(database());
+    if (!query.prepare(QStringLiteral("SELECT ") + QLatin1String(kMemeColumns) +
+                       QStringLiteral(" FROM memes WHERE id=:id"))) {
+        LogService::instance().error(QStringLiteral("读取表情包索引失败"));
+        return false;
+    }
+    query.bindValue(QStringLiteral(":id"), memeId);
+    if (!query.exec()) {
+        LogService::instance().error(QStringLiteral("读取表情包索引失败"));
+        return false;
+    }
+    // 记录不存在是正常业务分支（原图已被外部删除），不写错误日志。
+    if (!query.next())
+        return false;
+    *record = readMemeRecord(query);
+    return true;
 }
 
 // 查询 nickname 表并按 meme_id 组装内存索引。

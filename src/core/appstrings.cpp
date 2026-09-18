@@ -12,8 +12,8 @@ QString AppStrings::settingsMenu() { return QStringLiteral("设置"); }
 QString AppStrings::pauseCaptureMenu() { return QStringLiteral("暂停图片捕获"); }
 QString AppStrings::resumeCaptureMenu() { return QStringLiteral("恢复图片捕获"); }
 QString AppStrings::exitMenu() { return QStringLiteral("退出"); }
-QString AppStrings::readyTooltip() { return QStringLiteral("MemeServant2 已就绪"); }
-QString AppStrings::readyNotification() { return QStringLiteral("MemeServant2 已就绪"); }
+QString AppStrings::readyTooltip() { return QStringLiteral(MEMESERVANT2_DISPLAY_NAME " v" MEMESERVANT2_VERSION_STRING); }
+QString AppStrings::readyNotification() { return QStringLiteral(MEMESERVANT2_DISPLAY_NAME " v" MEMESERVANT2_VERSION_STRING); }
 QString AppStrings::databaseErrorTitle() { return QStringLiteral("数据库错误"); }
 QString AppStrings::databaseErrorAdvice() { return QStringLiteral("\n可以打开图库目录检查数据库，或退出应用。"); }
 QString AppStrings::globalHotkeyUnavailable() { return QStringLiteral("MemeServant2 全局快捷键不可用，请在设置中重新配置。"); }
@@ -108,7 +108,7 @@ QString AppStrings::pixelUnitLabel() { return QStringLiteral("px"); }
 // 组合关于页 HTML；名称和版本由 CMake 配置生成，Qt 版本在运行时读取。
 QString AppStrings::aboutHtml()
 {
-    return QStringLiteral("<h3>" MEMESERVANT2_DISPLAY_NAME "</h3><p>Version " MEMESERVANT2_VERSION_STRING
+    return QStringLiteral("<h3>" MEMESERVANT2_DISPLAY_NAME "</h3><div>快捷检索、发送、管理你的表情包！</div><p>Version " MEMESERVANT2_VERSION_STRING
                           "<br>Qt %1<br>Windows x64</p>").arg(QT_VERSION_STR);
 }
 QString AppStrings::aiConfigurationError() { return QStringLiteral("AI配置错误"); }

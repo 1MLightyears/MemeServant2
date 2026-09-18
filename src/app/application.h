@@ -3,6 +3,7 @@
 #define APP_APPLICATION_H
 
 // 维护系统托盘、通知、设置窗口和控制器之间的连接。
+#include <QIcon>
 #include <QObject>
 
 class AppController;
@@ -18,9 +19,13 @@ public:
     bool start();
 
 private:
+    /// 首次打开设置时才构造窗口，托盘常驻期间不必保留设置页的控件树。
+    SettingsWindow *ensureSettings();
+
     AppController *m_controller = nullptr;
     QSystemTrayIcon *m_tray = nullptr;
     SettingsWindow *m_settings = nullptr;
+    QIcon m_trayIcon;
 };
 
 #endif

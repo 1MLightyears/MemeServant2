@@ -38,6 +38,8 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 MemeServant2-<version>-<packagePlatform>.zip
 ```
 
+打包只分发运行期确实会加载的 Qt 插件：`sqldrivers` 仅保留 `qsqlite`，并删除 `generic`、`networkinformation` 和 `tls\qcertonlybackend.dll`。`Qt6Svg.dll` 只在设置页图标里使用，`CMakeLists.txt` 用 MSVC `/DELAYLOAD` 让它延迟加载，因此不在普通导入表中，`windeployqt` 扫描不到：构建后的 POST_BUILD 步骤和 `package.ps1` 都会显式复制这个 DLL，删掉这两处复制会让设置页图标在运行期加载失败。`Qt6Network.dll` 不能这样处理——`openaicompatibleprovider.cpp` 的 `qobject_cast<QNetworkReply *>` 引用了 `QNetworkReply::staticMetaObject` 数据符号，MSVC 无法延迟加载数据导入（LNK1194），它必须保持普通导入并由 `windeployqt` 正常部署。
+
 剪贴板端到端验证脚本会启动目标窗口和 `build\MemeServant2.exe`，触发快捷键并检查自动粘贴：
 
 ```powershell

@@ -125,15 +125,26 @@ void CaptureToast::updateThumbnail()
     reader.setAutoTransform(true);
     if (!m_image.format.trimmed().isEmpty())
         reader.setFormat(m_image.format.toLatin1());
+    const QSize available = m_thumbnail->size() - QSize(12, 12);
+    // 大图只按缩略图尺寸解码，避免为了 312x120 的占位区先解出整张原图。
+    const QSize sourceSize = reader.size();
+    const QSize target = sourceSize.isValid() ? sourceSize.scaled(available, Qt::KeepAspectRatio)
+                                              : QSize();
+    if (target.isValid() && target.width() < sourceSize.width() &&
+        target.height() < sourceSize.height())
+        reader.setScaledSize(target);
     const QImage preview = reader.read();
     if (preview.isNull()) {
         m_thumbnail->setText(AppStrings::thumbnailUnavailable());
         return;
     }
 
-    const QSize available = m_thumbnail->size() - QSize(12, 12);
-    m_thumbnail->setPixmap(QPixmap::fromImage(preview).scaled(
-        available, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    // setScaledSize 只是提示：解码器不遵守它时，在这里补一次缩放。
+    const QImage fitted = (!target.isEmpty() && preview.size() == target)
+                              ? preview
+                              : preview.scaled(available, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation);
+    m_thumbnail->setPixmap(QPixmap::fromImage(fitted));
 }
 
 // 在多行编辑器中优先处理配置的快捷键，其他按键保持正常换行行为。

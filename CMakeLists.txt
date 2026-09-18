@@ -91,6 +91,26 @@ if(WIN32)
     )
 endif()
 
+if(MSVC)
+    # 只有 Qt6Svg 延迟加载：它仅在设置窗口重绘图标时使用，代码里没有引用它的数据符号。
+    # Qt6Network 不能延迟加载：openaicompatibleprovider.cpp 的 qobject_cast<QNetworkReply*>
+    # 会引用 QNetworkReply::staticMetaObject 这个数据导入，MSVC 无法延迟加载数据符号（LNK1194），
+    # 因此保持普通导入，启动时就映射。
+    # 用 TARGET_FILE_NAME 而不是写死文件名，Debug 构建的 Qt6Svgd.dll 同样生效。
+    target_link_options(MemeServant2 PRIVATE
+        "/DELAYLOAD:$<TARGET_FILE_NAME:Qt6::Svg>"
+    )
+    target_link_libraries(MemeServant2 PRIVATE delayimp)
+    # 延迟加载的模块不在普通导入表里，windeployqt 扫描不到，显式复制保证运行期能找到。
+    add_custom_command(TARGET MemeServant2 POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:Qt6::Svg>"
+                "$<TARGET_FILE_DIR:MemeServant2>"
+        COMMENT "正在复制延迟加载的Qt模块"
+        VERBATIM
+    )
+endif()
+
 target_include_directories(MemeServant2 PRIVATE src)
 target_include_directories(MemeServant2 PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(MemeServant2 PRIVATE

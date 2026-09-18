@@ -142,6 +142,25 @@ QByteArray imageToDibV5(const QImage &source)
     return result;
 }
 
+// 判断图像是否真的需要 alpha：带 alpha 通道但全部不透明的图像不值得再投递一份 32 位 DIB。
+bool hasTransparency(const QImage &source)
+{
+    if (!source.hasAlphaChannel())
+        return false;
+    // ARGB32 系列可以直接按像素读；其他带 alpha 的格式先统一转换再扫描。
+    const bool direct = source.format() == QImage::Format_ARGB32 ||
+                        source.format() == QImage::Format_ARGB32_Premultiplied;
+    const QImage image = direct ? source : source.convertToFormat(QImage::Format_ARGB32);
+    for (int y = 0; y < image.height(); ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (qAlpha(line[x]) != 255)
+                return true;
+        }
+    }
+    return false;
+}
+
 // 分配 Windows 剪贴板要求的可移动全局内存并复制字节。
 HANDLE allocateBytes(const QByteArray &bytes)
 {
@@ -396,7 +415,11 @@ bool WinClipboard::writeImage(const CapturedImage &captured, QString *error)
         putBytes(m_jpegFormat, encoded, QStringLiteral("JPEG原图"));
 
     const bool dibWritten = putBytes(CF_DIB, imageToDib(image), QStringLiteral("CF_DIB"));
-    const bool dibV5Written = putBytes(CF_DIBV5, imageToDibV5(image), QStringLiteral("CF_DIBV5"));
+    // 只有原图确实带透明像素时才投递 CF_DIBV5：这份 32 位 DIB 会一直留到剪贴板被替换，
+    // 对不透明图片额外占用一份整图大小的私有内存，却没有任何粘贴方需要它。
+    bool dibV5Written = false;
+    if (hasTransparency(image))
+        dibV5Written = putBytes(CF_DIBV5, imageToDibV5(image), QStringLiteral("CF_DIBV5"));
     const bool imageWritten = pngWritten || dibWritten || dibV5Written;
     if (!imageWritten) {
         if (error) {

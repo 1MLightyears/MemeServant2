@@ -91,15 +91,29 @@ void PreviewPopup::showOriginal(const QString &sourcePath, const QRect &anchorRe
             m_movie->jumpToFrame(0);
             resizeForContent(size);
         } else {
+            // 让解码器直接输出目标尺寸：JPEG 等格式可以在解码阶段就缩小，避免为一张
+            // 超大原图同时持有整图、整图 QPixmap 和缩放副本三份内存。
+            const QSize sourceSize = reader.size();
+            QSize decodeSize;
+            if (sourceSize.isValid() && sourceSize != size)
+                decodeSize = sourceSize.scaled(size, Qt::KeepAspectRatio);
+            if (!decodeSize.isEmpty())
+                reader.setScaledSize(decodeSize);
             const QImage image = reader.read();
-            const QPixmap pixmap = QPixmap::fromImage(image);
-            if (!pixmap.isNull()) {
-                const QPixmap displayed = pixmap.scaled(size, Qt::KeepAspectRatio,
-                                                        Qt::SmoothTransformation);
-                m_label->setPixmap(displayed);
-                resizeForContent(displayed.size());
-            } else {
+            if (image.isNull()) {
                 resizeForContent(size);
+            } else {
+                // 解码器遵守提示时直接用；返回整图（或读不到原始尺寸）时补一次缩放，
+                // 保证预览尺寸和内容始终一致。
+                const bool decodedToTarget = image.size() == size ||
+                                             (!decodeSize.isEmpty() && image.size() == decodeSize);
+                const QImage fitted = decodedToTarget
+                                          ? image
+                                          : image.scaled(size, Qt::KeepAspectRatio,
+                                                         Qt::SmoothTransformation);
+                const QPixmap pixmap = QPixmap::fromImage(fitted);
+                m_label->setPixmap(pixmap);
+                resizeForContent(pixmap.size());
             }
         }
     }
@@ -124,9 +138,13 @@ void PreviewPopup::showOriginal(const QString &sourcePath, const QRect &anchorRe
 // 停止 GIF、清空 QLabel 并隐藏窗口，下一次显示可重新加载资源。
 void PreviewPopup::closePreview()
 {
-    if (m_movie)
+    if (m_movie) {
+        // 预览隐藏后不会再使用上一张 GIF：连解码器和已解码帧一起释放，避免常驻内存。
         m_movie->stop();
-    m_label->setMovie(nullptr);
+        m_label->setMovie(nullptr);
+        delete m_movie;
+        m_movie = nullptr;
+    }
     m_label->setPixmap(QPixmap());
     hide();
 }

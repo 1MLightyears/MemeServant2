@@ -21,6 +21,8 @@ public:
 
     /// 查询全部表情包索引记录。
     QVector<MemeRecord> memes();
+    /// 查询单个表情包索引记录；记录不存在或查询失败时返回 false。
+    bool findMeme(const QString &memeId, MemeRecord *record) const;
     /// 查询全部 nickname，并按 meme_id 分组。
     QHash<QString, QVector<NicknameRecord>> nicknames();
     /// 插入表情包索引并写入其初始 nickname 集合。

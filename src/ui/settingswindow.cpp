@@ -232,7 +232,7 @@ QWidget *SettingsWindow::buildStoragePage()
 QWidget *SettingsWindow::buildAboutPage()
 {
     auto *page = new QLabel(AppStrings::aboutHtml(), this);
-    page->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    page->setAlignment(Qt::AlignVCenter | Qt::AlignHCenter);
     page->setContentsMargins(24, 24, 24, 24);
     return page;
 }
