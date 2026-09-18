@@ -11,6 +11,7 @@
 #include <QImage>
 #include <QBuffer>
 #include <QImageReader>
+#include <QPair>
 #include <QTimer>
 #include <QScopeGuard>
 #include <QSet>
@@ -340,29 +341,42 @@ bool AppController::deleteMeme(const QString &memeId, QString *error)
 {
     const QStringList paths = m_database.memeFilePaths(memeId);
     QDir trashDirectory(m_database.galleryPath() + QStringLiteral("/.trash"));
-    trashDirectory.mkpath(QStringLiteral("."));
-    QStringList movedPaths;
+    if (!trashDirectory.mkpath(QStringLiteral("."))) {
+        if (error)
+            *error = QStringLiteral("无法创建回收目录，已保留原记录。");
+        return false;
+    }
+
+    // 同时记录原路径和临时路径，回滚不会因为跳过不存在的文件而错位。
+    QVector<QPair<QString, QString>> movedFiles;
+    movedFiles.reserve(paths.size());
+    const auto rollbackMoves = [&movedFiles]() {
+        for (auto move = movedFiles.crbegin(); move != movedFiles.crend(); ++move)
+            QFile::rename(move->second, move->first);
+    };
+
     for (const QString &path : paths) {
         if (!QFile::exists(path))
             continue;
-        const QString target = trashDirectory.filePath(QFileInfo(path).fileName() +
-            QStringLiteral(".%1.deleting").arg(QDateTime::currentMSecsSinceEpoch()));
+        // v1.0.1(20260918): 原图和缩略图可能同名，必须为每次移动生成唯一目标名，避免在 .trash 中互相覆盖。
+        const QString target = trashDirectory.filePath(
+            QFileInfo(path).fileName() + QLatin1Char('.') +
+            QUuid::createUuid().toString(QUuid::WithoutBraces) +
+            QStringLiteral(".deleting"));
         if (!QFile::rename(path, target)) {
-            for (int index = movedPaths.size() - 1; index >= 0; --index)
-                QFile::rename(movedPaths.at(index), paths.at(index));
+            rollbackMoves();
             if (error)
                 *error = QStringLiteral("删除源文件或缩略图失败，已保留原记录。");
             return false;
         }
-        movedPaths.append(target);
+        movedFiles.append(QPair<QString, QString>(path, target));
     }
     if (!m_database.deleteMeme(memeId, error)) {
-        for (int index = 0; index < movedPaths.size(); ++index)
-            QFile::rename(movedPaths.at(index), paths.at(index));
+        rollbackMoves();
         return false;
     }
-    for (const QString &path : std::as_const(movedPaths))
-        QFile::remove(path);
+    for (const auto &move : std::as_const(movedFiles))
+        QFile::remove(move.second);
     reloadRecords(false);
     LogService::instance().info(QStringLiteral("表情包及其关联nickname已删除"));
     return true;
