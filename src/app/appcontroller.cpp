@@ -34,6 +34,7 @@
 
 namespace {
 constexpr char kApiKeyTarget[] = "AiApiKey";
+const int THUMBNAIL_THREAD_TIMEOUT = 10000;
 }
 
 // 初始化配置存储；其余服务在 initialize 中按依赖顺序创建。
@@ -48,7 +49,7 @@ AppController::~AppController()
     if (m_thumbnailThread) {
         m_thumbnailThread->requestInterruption();
         m_thumbnailThread->quit();
-        m_thumbnailThread->wait(3000);
+        m_thumbnailThread->wait(THUMBNAIL_THREAD_TIMEOUT);
     }
     if (m_captureToast)
         m_captureToast->cancel();
@@ -152,11 +153,13 @@ void AppController::reloadRecords(bool scheduleThumbnails)
         startThumbnailScan(memes);
 }
 
-// 每次只允许一个 worker 存活；完成后线程退出并复位，后续变更可再次扫描。
+// 每次只允许一个 worker 存活；扫描期间的请求不丢弃，当前扫描结束后自动补扫一次。
 void AppController::startThumbnailScan(const QVector<MemeRecord> &records)
 {
-    if (m_thumbnailThread)
+    if (m_thumbnailThread) {
+        m_thumbnailScanPending = true;
         return;
+    }
     m_thumbnailThread = new QThread(this);
     m_thumbnailWorker = new ThumbnailWorker;
     m_thumbnailWorker->moveToThread(m_thumbnailThread);
@@ -166,6 +169,11 @@ void AppController::startThumbnailScan(const QVector<MemeRecord> &records)
         m_thumbnailThread->deleteLater();
         m_thumbnailThread = nullptr;
         m_thumbnailWorker = nullptr;
+        // 补扫时重新读取数据库快照，把扫描进行中新增的记录纳入生成范围。
+        if (m_thumbnailScanPending) {
+            m_thumbnailScanPending = false;
+            reloadRecords(true);
+        }
     });
     m_thumbnailThread->start();
     const QString gallery = m_database.galleryPath();
@@ -229,6 +237,11 @@ bool AppController::saveConfiguration(AppConfig config, QString *error)
     if (config.quickHotkey != m_config.quickHotkey && !config.quickHotkey.isEmpty()) {
         QString hotkeyError;
         if (!m_hotkey->registerSequence(config.quickHotkey, &hotkeyError)) {
+            // registerSequence 会先注销旧键再注册新键；注册失败时必须尽力恢复旧键，
+            // 否则保存虽被拒绝，旧快捷键却已静默失效，直到下次成功保存或重启进程。
+            if (!m_config.quickHotkey.isEmpty() &&
+                !m_hotkey->registerSequence(m_config.quickHotkey, nullptr))
+                LogService::instance().warning(QStringLiteral("旧全局快捷键恢复注册失败"));
             if (error)
                 *error = hotkeyError;
             return false;

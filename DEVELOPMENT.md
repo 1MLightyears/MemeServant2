@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 MemeServant2-<version>-<packagePlatform>.zip
 ```
 
-打包只分发运行期确实会加载的 Qt 插件：`sqldrivers` 仅保留 `qsqlite`，并删除 `generic`、`networkinformation` 和 `tls\qcertonlybackend.dll`。`Qt6Svg.dll` 只在设置页图标里使用，`CMakeLists.txt` 用 MSVC `/DELAYLOAD` 让它延迟加载，因此不在普通导入表中，`windeployqt` 扫描不到：构建后的 POST_BUILD 步骤和 `package.ps1` 都会显式复制这个 DLL，删掉这两处复制会让设置页图标在运行期加载失败。`Qt6Network.dll` 不能这样处理——`openaicompatibleprovider.cpp` 的 `qobject_cast<QNetworkReply *>` 引用了 `QNetworkReply::staticMetaObject` 数据符号，MSVC 无法延迟加载数据导入（LNK1194），它必须保持普通导入并由 `windeployqt` 正常部署。
+打包只分发运行期确实会加载的 Qt 插件：`sqldrivers` 仅保留 `qsqlite`，并删除 `generic`、`networkinformation` 和 `tls\qcertonlybackend.dll`（TLS 使用系统自带的 schannel 后端，删除证书专用后端不影响 AI 请求）。`Qt6Svg.dll` 只在设置页图标着色（`AppStyle::themedIcon` 里的 `QSvgRenderer`）时使用，`CMakeLists.txt` 用 MSVC `/DELAYLOAD` 让它推迟到首次打开设置窗口才加载；它因此不在普通导入表中，不一定被 `windeployqt` 的依赖扫描覆盖，所以构建后的 POST_BUILD 步骤和 `package.ps1` 都会显式复制这个 DLL，删掉这两处复制会让首次打开设置窗口时延迟加载失败并直接终止进程。`Qt6Network.dll` 不能这样处理——`openaicompatibleprovider.cpp` 的 `qobject_cast<QNetworkReply *>` 引用了 `QNetworkReply::staticMetaObject` 数据符号，MSVC 无法延迟加载数据导入（LNK1194），它必须保持普通导入并由 `windeployqt` 正常部署。
 
 剪贴板端到端验证脚本会启动目标窗口和 `build\MemeServant2.exe`，触发快捷键并检查自动粘贴：
 
@@ -76,7 +76,7 @@ exe 图标、托盘图标和通知图标都来自同一个 `src/resources/icon.i
 | `src/storage` | 配置、SQLite、导入、日志等持久化服务 |
 | `src/ai` | OpenAI Compatible Vision 网络请求 |
 | `src/thumbnail` | 后台缩略图生成 |
-| `src/platforms/win` | Windows 剪贴板、快捷键、粘贴、凭据、归档等平台能力 |
+| `src/platforms/win` | Windows 剪贴板、快捷键、粘贴、凭据、归档等平台能力；`winwindoweffects`（DWM 背景效果）目前预留未接线 |
 | `src/ui` | 捕获浮窗、快捷栏、设置和 nickname 对话框 |
 | `src/resources` | 应用与托盘图标；icon.ico 由 `scripts/make-icon-ico.py` 从 icon.png 生成，运行时与 exe 图标统一引用 icon.ico |
 | `src/prompts` | AI prompt 资源 |
@@ -116,8 +116,9 @@ CMakeLists.txt configure_file()
 
 - 原生事件过滤器在所有平台服务就绪后才安装，顺序不能随意提前。
 - 全局快捷键注册失败时不阻止启动，只清空冲突配置并托盘提示。
-- `saveConfiguration` 的顺序是“先验证快捷键/打开新图库，再写配置，最后刷新服务”。
+- `saveConfiguration` 的顺序是“先验证快捷键/打开新图库，再写配置，最后刷新服务”。`WinGlobalHotkey::registerSequence` 会先注销旧键再注册新键，新键注册失败时必须恢复旧注册，否则保存虽然被拒绝，旧快捷键也会静默失效。
 - 图库路径变化会切换数据库；缩略图缓存尺寸变化会清空并重建缓存。
+- 设置窗口由 `Application::ensureSettings` 在首次打开时才构造，托盘常驻期间只保留托盘、菜单和全局样式表。全局 QSS 由 `AppStyle::applyTheme()` 在启动时应用，并只在内容（含深浅色切换）变化时重新应用，不要在同内容时反复调用。
 
 ### 剪贴板捕获与保存
 
@@ -129,6 +130,8 @@ CMakeLists.txt configure_file()
 - 捕获浮窗只响应用户保存；AI 结果只填入输入框，不能自动落盘。
 - 保存流程先写原图，再写数据库；数据库失败时需要移除已写入的文件。
 - nickname 的清洗和唯一性判断统一走 `NicknameUtils`。
+- 选择表情包（`AppController::selectMeme`）直接读原图字节，宽高取自索引记录，不为取尺寸整图解码；原图能否解码统一由 `WinClipboard::writeImage` 在写剪贴板前校验。调整解码或错误提示逻辑时改 `writeImage`，不要把校验拆回调用方。
+- 写剪贴板时只对确有透明像素的图片投递 CF_DIBV5（这份 32 位 DIB 会常驻剪贴板直到被替换），不透明图片只保留 PNG 与 24 位 CF_DIB。
 
 ### AI 识图
 
@@ -143,11 +146,13 @@ CMakeLists.txt configure_file()
 
 ### 快捷栏与搜索
 
-`SearchEngine` 从数据库快照生成精确、前缀、包含、子序列四级稳定排序；`QuickBar` 持有自己的搜索快照并渲染候选网格。`ThumbnailWorker` 在后台生成静态 PNG 缓存，`PreviewPopup` 延迟展示原图。
+`SearchEngine` 从数据库快照生成精确、前缀、包含、子序列四级稳定排序；`QuickBar` 持有自己的搜索快照并渲染候选网格。`ThumbnailWorker` 在后台生成静态 PNG 缓存（GIF 固定第一帧），`PreviewPopup` 延迟展示原图，按目标尺寸解码并在关闭时释放 GIF 解码器与已解码帧。
 
 改动时注意：
 
-- 任何数据库记录变化都要触发 `recordsChanged`，让快捷栏和缩略图扫描拿到新快照。
+- 任何数据库记录变化都要经 `AppController::reloadRecords` 推送新快照给快捷栏，并按需触发缩略图扫描；不要只刷新其中一侧。
+- 缩略图扫描同一时刻只有一个 worker；扫描进行中收到的新快照会挂起一次，当前扫描结束后自动补扫（`m_thumbnailScanPending`）。改这块逻辑时要保持“忙时挂起、结束后补扫”的语义，否则扫描期间新增的记录可能一直拿不到缓存。
+- 快捷栏候选优先读取 `.thumbnails` 缓存；缓存缺失或尺寸不足时按显示尺寸现场解码原图，缓存路径拼接规则必须与 `ThumbnailWorker` 的输出保持一致。
 - 搜索、缩略图加载和选中行为都依赖图库路径；不要绕过 `AppConfig::resolvedGalleryPath` 拼路径。
 - 快捷栏失焦关闭逻辑受 `managementActive` 保护；新增弹窗或菜单时需要避免误关闭。
 - 空查询按最近使用排序；键盘导航按行列数移动。
@@ -177,13 +182,14 @@ CMakeLists.txt configure_file()
 
 ### UI 与设置
 
-`SettingsWindow` 将控件状态收集到 `AppConfig`，通过 `AppController::saveConfiguration` 原子应用；关闭窗口只是隐藏，退出由托盘控制。用户可见文案集中在 `AppStrings`。
+`SettingsWindow` 将控件状态收集到 `AppConfig`，通过 `AppController::saveConfiguration` 原子应用；窗口由 `Application` 在首次打开时才构造，之后常驻复用，关闭只是隐藏，退出由托盘控制。用户可见文案集中在 `AppStrings`。
 
 改动时注意：
 
 - 新增设置字段要同步 `AppConfig`、JSON 读写、UI 控件、`collect` 和 `reloadFromController`。
 - 保存失败时保留旧配置，不可只更新控件内存状态。
 - 新增用户可见文案优先进入 `AppStrings`。
+- 窗口按需构造意味着不存在“启动时初始化”的时机：依赖控制器信号的逻辑要容忍窗口创建前发出的信号，构造末尾会用当前配置完整刷新一次（`reloadFromController`）。
 
 ## 版本号
 

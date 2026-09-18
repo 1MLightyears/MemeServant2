@@ -85,6 +85,8 @@ private:
     ThumbnailWorker *m_thumbnailWorker = nullptr;
     quintptr m_foregroundWindow = 0;
     bool m_startupHotkeyConflict = false;
+    /// 缩略图扫描进行中又收到新快照时挂起一次，当前扫描结束后补扫。
+    bool m_thumbnailScanPending = false;
 };
 
 #endif
