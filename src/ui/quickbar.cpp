@@ -20,6 +20,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSizePolicy>
+#include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
 #include <QApplication>
 #include <QResizeEvent>
@@ -308,6 +309,12 @@ void QuickBar::rebuild(const QString &query)
     for (int index = 0; index < m_results.size(); ++index) {
         const SearchResult &result = m_results.at(index);
         auto *card = new QuickCandidate(result, m_config.thumbnailDisplaySize, m_candidateHost);
+        // 未匹配候选整体降级：默认不透明度可配置，空查询时不受影响。
+        if (!wanted.isEmpty() && result.matchLevel >= 5 && m_config.unmatchedCardOpacity < 100) {
+            auto *opacity = new QGraphicsOpacityEffect(card);
+            opacity->setOpacity(qBound(0, m_config.unmatchedCardOpacity, 100) / 100.0);
+            card->setGraphicsEffect(opacity);
+        }
         const QSize displaySize(m_config.thumbnailDisplaySize, m_config.thumbnailDisplaySize);
         const QString sourceFilePath = sourcePath(result.meme);
         const QString cachedPath = thumbnailPath(result.meme);
@@ -392,15 +399,29 @@ void QuickBar::rebuild(const QString &query)
     adjustSize();
 }
 
-// 创建带提示文字的横向分割线：中间是“未匹配”标签，两侧是较亮的线段。
+// 创建横向渐隐分割线：中间可见、向两端平滑淡出，只做边界不做说明。
+// 上下呼吸空间由“匹配分割线间距”配置控制，默认14px。
 QFrame *QuickBar::makeSeparator()
 {
+    // 外层只提供呼吸边距；渐变画在内层 1px 线上，避免边距区域也被填充。
     auto *separator = new QFrame(m_candidateHost);
     separator->setAttribute(Qt::WA_StyledBackground);
-    separator->setFixedHeight(2);
-    separator->setStyleSheet(QStringLiteral(
-        "QFrame{background:rgba(255,255,255,120);border:none;border-radius:1px}"));
+    separator->setStyleSheet(QStringLiteral("QFrame{background:transparent;border:none}"));
     separator->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    const int spacing = qBound(0, m_config.separatorSpacing, 100);
+    auto *separatorLayout = new QVBoxLayout(separator);
+    separatorLayout->setContentsMargins(0, spacing, 0, spacing);
+    auto *line = new QFrame(separator);
+    line->setAttribute(Qt::WA_StyledBackground);
+    line->setFixedHeight(1);
+    line->setStyleSheet(QStringLiteral(
+        "QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "stop:0 rgba(255,255,255,0),"
+        "stop:0.2 rgba(255,255,255,90),"
+        "stop:0.5 rgba(255,255,255,140),"
+        "stop:0.8 rgba(255,255,255,90),"
+        "stop:1 rgba(255,255,255,0))}"));
+    separatorLayout->addWidget(line);
     return separator;
 }
 
@@ -415,10 +436,17 @@ void QuickBar::syncScrollRange()
     // 明确给出网格宽度，避免 QScrollArea 回退到很窄的默认尺寸。
     m_scroll->setFixedWidth(columns * displaySize + (columns - 1) * spacing);
     const int cardCount = m_cards.size();
-    const int contentRows = qMax(1, (cardCount + columns - 1) / columns + (m_separator ? 1 : 0));
-    const int visibleRows = qBound(1, qMax(1, m_config.rows), contentRows);
+    // 分割线行高度 = 上下呼吸空间 + 1px 线，与卡片行分别累计到内容总高。
+    const int separatorHeight = m_separator
+        ? 2 * qBound(0, m_config.separatorSpacing, 100) + 1 + 2 * m_grid->verticalSpacing()
+        : 0;
+    const int contentRows = qMax(1, (cardCount + columns - 1) / columns);
+    const int visibleRows = qBound(1, qMax(1, m_config.rows), contentRows + (m_separator ? 1 : 0));
     const int rowHeight = displaySize + m_grid->verticalSpacing();
-    m_scroll->setFixedHeight(visibleRows * rowHeight - m_grid->verticalSpacing());
+    int contentHeight = visibleRows * rowHeight - m_grid->verticalSpacing();
+    if (m_separator)
+        contentHeight += separatorHeight;
+    m_scroll->setFixedHeight(contentHeight);
 }
 
 // 把当前候选滚动到可视区域内，方向键导航时用户始终能看到选中卡片。

@@ -3,5 +3,7 @@
         <file>icon.ico</file>
         <file>import.svg</file>
         <file>set.svg</file>
+        <file>up.svg</file>
+        <file>down.svg</file>
     </qresource>
 </RCC>

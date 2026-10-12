@@ -101,6 +101,11 @@ AppConfig ConfigStore::load()
     config.aiNicknameExampleCount = qBound(
         0, object.value(QStringLiteral("aiNicknameExampleCount")).toInt(8), 50);
     config.thumbnailCacheSize = object.value(QStringLiteral("thumbnailCacheSize")).toInt(256);
+    // 未匹配降级透明度和分割线呼吸空间越界时回退到默认值。
+    int unmatchedOpacity = object.value(QStringLiteral("unmatchedCardOpacity")).toInt(75);
+    config.unmatchedCardOpacity = (unmatchedOpacity < 0 || unmatchedOpacity > 100) ? 75 : unmatchedOpacity;
+    int separatorSpacing = object.value(QStringLiteral("separatorSpacing")).toInt(14);
+    config.separatorSpacing = (separatorSpacing < 0 || separatorSpacing > 100) ? 14 : separatorSpacing;
     m_activePath = file.fileName();
     return config;
 }
@@ -132,6 +137,8 @@ bool ConfigStore::save(AppConfig &config, QString *error)
     object.insert(QStringLiteral("autoAi"), config.autoAi);
     object.insert(QStringLiteral("aiNicknameExampleCount"), config.aiNicknameExampleCount);
     object.insert(QStringLiteral("thumbnailCacheSize"), config.thumbnailCacheSize);
+    object.insert(QStringLiteral("unmatchedCardOpacity"), config.unmatchedCardOpacity);
+    object.insert(QStringLiteral("separatorSpacing"), config.separatorSpacing);
 
     QFileInfo info(path);
     if (!info.dir().exists())
