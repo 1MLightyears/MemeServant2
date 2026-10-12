@@ -31,6 +31,10 @@ struct AppConfig
     bool autoAi = false;
     int aiNicknameExampleCount = 8;
     int thumbnailCacheSize = 256;
+    /// 搜索时未匹配候选卡片的整体不透明度（百分比，0~100）；100 表示不降级。
+    int unmatchedCardOpacity = 75;
+    /// 匹配分割线上下的呼吸空间（像素，0~100）。
+    int separatorSpacing = 14;
 
     /// 将空图库路径解析为程序目录下的 memes 子目录。
     QString resolvedGalleryPath(const QString &applicationDirectory) const;

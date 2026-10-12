@@ -14,6 +14,9 @@ bool isDarkPalette();
 QColor iconColor();
 /// 读取qrc中的SVG并按iconColor()重新着色；渲染失败时退化为原始QIcon。
 QIcon themedIcon(const QString &resourcePath);
+/// 返回QSS可用的着色SVG地址：按当前系统配色渲染到缓存文件。
+/// 供样式表image等无法走QIcon着色路径的场合复用；同源同主题命中缓存。
+QString decideBySysTheme(const QString &resourcePath);
 /// 根据配色方案生成并应用全局QSS（按钮圆角、边框、输入控件配色等）。
 void applyTheme();
 }

@@ -81,6 +81,16 @@ QString AppStrings::globalHotkeyLabel() { return QStringLiteral("全局快捷键
 QString AppStrings::candidateRowsLabel() { return QStringLiteral("候选行数"); }
 QString AppStrings::candidateColumnsLabel() { return QStringLiteral("候选列数"); }
 QString AppStrings::thumbnailDisplayLabel() { return QStringLiteral("缩略图显示尺寸"); }
+QString AppStrings::unmatchedOpacityLabel() { return QStringLiteral("未匹配候选不透明度"); }
+QString AppStrings::unmatchedOpacityHint()
+{
+    return QStringLiteral("搜索后未匹配候选相对匹配候选的显示亮度；数值越小越明显退后，100 表示不降级。");
+}
+QString AppStrings::separatorSpacingLabel() { return QStringLiteral("匹配分割线间距"); }
+QString AppStrings::separatorSpacingHint()
+{
+    return QStringLiteral("匹配结果与未匹配结果之间分割线上下留出的呼吸空间。");
+}
 QString AppStrings::autoPasteText() { return QStringLiteral("选中表情包后自动粘贴"); }
 QString AppStrings::providerLabel() { return QStringLiteral("Provider"); }
 QString AppStrings::endpointLabel() { return QStringLiteral("API Endpoint"); }

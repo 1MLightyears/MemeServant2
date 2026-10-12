@@ -68,6 +68,8 @@ private:
     QSpinBox *m_rows = nullptr;
     QSpinBox *m_columns = nullptr;
     QComboBox *m_displaySize = nullptr;
+    QSpinBox *m_unmatchedOpacity = nullptr;
+    QSpinBox *m_separatorSpacing = nullptr;
     QCheckBox *m_autoPaste = nullptr;
     QComboBox *m_provider = nullptr;
     QLineEdit *m_endpoint = nullptr;

@@ -55,8 +55,6 @@ private:
     void updateHoverFromCursor();
     /// 创建横跨网格整行的匹配分割线。
     QFrame *makeSeparator();
-    /// 返回视口当前能显示的候选行数，用于翻页键步长。
-    int visibleRowCount() const;
     /// 更新当前选中卡片并控制预览计时器。
     void setCurrent(int index);
     /// 将当前卡片写回剪贴板并按配置执行自动粘贴。

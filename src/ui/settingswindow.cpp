@@ -60,6 +60,8 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     connect(m_rows, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_columns, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_displaySize, &QComboBox::currentIndexChanged, this, [this]() { scheduleSave(); });
+    connect(m_unmatchedOpacity, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
+    connect(m_separatorSpacing, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_autoPaste, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
     connect(m_endpoint, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_model, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
@@ -145,11 +147,21 @@ QWidget *SettingsWindow::buildQuickbarPage()
     m_columns = new QSpinBox(page); m_columns->setRange(1, 8);
     m_displaySize = new QComboBox(page);
     for (int size : {64, 96, 128, 192, 256}) m_displaySize->addItem(AppStrings::pixelSize(size), size);
+    m_unmatchedOpacity = new QSpinBox(page);
+    m_unmatchedOpacity->setRange(0, 100);
+    m_unmatchedOpacity->setSuffix(QStringLiteral(" %"));
+    m_unmatchedOpacity->setToolTip(AppStrings::unmatchedOpacityHint());
+    m_separatorSpacing = new QSpinBox(page);
+    m_separatorSpacing->setRange(0, 100);
+    m_separatorSpacing->setSuffix(QStringLiteral(" px"));
+    m_separatorSpacing->setToolTip(AppStrings::separatorSpacingHint());
     m_autoPaste = new QCheckBox(AppStrings::autoPasteText(), page);
     form->addRow(AppStrings::globalHotkeyLabel(), m_quickHotkey);
     form->addRow(AppStrings::candidateRowsLabel(), m_rows);
     form->addRow(AppStrings::candidateColumnsLabel(), m_columns);
     form->addRow(AppStrings::thumbnailDisplayLabel(), m_displaySize);
+    form->addRow(AppStrings::unmatchedOpacityLabel(), m_unmatchedOpacity);
+    form->addRow(AppStrings::separatorSpacingLabel(), m_separatorSpacing);
     form->addRow(m_autoPaste);
     return page;
 }
@@ -255,6 +267,8 @@ void SettingsWindow::reloadFromController()
     m_autoPaste->setChecked(config.autoPaste);
     int index = m_displaySize->findData(config.thumbnailDisplaySize);
     m_displaySize->setCurrentIndex(index < 0 ? 2 : index);
+    m_unmatchedOpacity->setValue(config.unmatchedCardOpacity);
+    m_separatorSpacing->setValue(config.separatorSpacing);
     m_endpoint->setText(config.aiEndpoint); m_model->setText(config.aiModel);
     m_apiEnvName->setText(config.apiKeyEnvName); m_autoAi->setChecked(config.autoAi);
     m_aiNicknameExampleCount->setValue(config.aiNicknameExampleCount);
@@ -286,6 +300,8 @@ void SettingsWindow::collect(AppConfig &config)
     config.quickHotkey = m_quickHotkey->keySequence().toString();
     config.rows = m_rows->value(); config.columns = m_columns->value();
     config.thumbnailDisplaySize = m_displaySize->currentData().toInt();
+    config.unmatchedCardOpacity = m_unmatchedOpacity->value();
+    config.separatorSpacing = m_separatorSpacing->value();
     config.autoPaste = m_autoPaste->isChecked();
     config.aiEndpoint = m_endpoint->text(); config.aiModel = m_model->text();
     config.apiKeyEnvName = m_apiEnvName->text(); config.autoAi = m_autoAi->isChecked();
