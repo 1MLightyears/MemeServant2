@@ -3,6 +3,9 @@
 
 #include <QCursor>
 #include <QEvent>
+#include <QFrame>
+#include <QScrollBar>
+#include <QScrollArea>
 #include <QEnterEvent>
 #include <QFileInfo>
 #include <QGridLayout>
@@ -16,6 +19,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QGuiApplication>
 #include <QApplication>
 #include <QResizeEvent>
@@ -132,31 +136,76 @@ QuickBar::QuickBar(QWidget *parent)
         "QWidget#candidateHost{background:transparent}"
         "QLineEdit{background:rgba(0,0,0,96);border:1px solid rgba(255,255,255,32);"
         "border-radius:9px;color:#fff;padding:8px}"
-        "QLabel{background:transparent;color:#fff}"));
+        "QLabel{background:transparent;color:#fff}"
+        "QScrollBar:vertical{background:rgba(0,0,0,96);width:8px;border-radius:4px}"
+        "QScrollBar::handle:vertical{background:rgba(255,255,255,72);border-radius:4px;min-height:24px}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0}"
+        "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent}"));
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 9, 10, 9);
     m_search = new QLineEdit(this);
     m_search->setPlaceholderText(AppStrings::searchPlaceholder());
     m_search->installEventFilter(this);
     connect(m_search, &QLineEdit::textChanged, this, &QuickBar::rebuild);
-    m_candidateHost = new QWidget(this);
+    m_scroll = new QScrollArea(this);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent}"));
+    m_candidateHost = new QWidget;
     m_candidateHost->setObjectName(QStringLiteral("candidateHost"));
     m_grid = new QGridLayout(m_candidateHost);
     m_grid->setContentsMargins(0, 0, 0, 0);
     m_grid->setSpacing(6);
     m_grid->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    layout->addWidget(m_search); layout->addWidget(m_candidateHost);
+    m_scroll->setWidget(m_candidateHost);
+    layout->addWidget(m_search);
+    layout->addWidget(m_scroll, 1);
     m_previewTimer.setSingleShot(true);
     connect(&m_previewTimer, &QTimer::timeout, this, [this]() {
-        if (!m_previewAllowed || !isVisible() || m_current < 0 || m_current >= m_results.size())
+        // 预览只由鼠标悬停触发；键盘选中不再弹出原图。
+        if (!m_previewAllowed || !isVisible() || m_hovered < 0 || m_hovered >= m_results.size())
             return;
-        // 以当前卡片为锚点，让预览贴在缩略图旁而不是整个快捷栏旁。
-        const QuickCandidate *card = m_current < m_cards.size() ? m_cards.at(m_current) : nullptr;
+        // 以悬停卡片为锚点，让预览贴在缩略图旁而不是整个快捷栏旁。
+        const QuickCandidate *card = m_hovered < m_cards.size() ? m_cards.at(m_hovered) : nullptr;
         const QRect anchor = card ? QRect(card->mapToGlobal(QPoint(0, 0)), card->size())
                                   : QRect(QCursor::pos(), QSize(1, 1));
-        m_preview->showOriginal(sourcePath(m_results.at(m_current).meme), anchor);
+        m_preview->showOriginal(sourcePath(m_results.at(m_hovered).meme), anchor);
     });
     m_preview = new PreviewPopup(this);
+    m_scroll->viewport()->installEventFilter(this);
+}
+
+// 更新悬停项并按悬停延迟重启原图预览计时器。
+void QuickBar::setHovered(int index)
+{
+    if (index == m_hovered)
+        return;
+    m_hovered = index;
+    m_preview->closePreview();
+    m_previewTimer.stop();
+    if (m_previewAllowed && isVisible() && index >= 0 && index < m_results.size() &&
+        m_config.thumbnailPreviewDelayMs > 0) {
+        m_previewTimer.start(m_config.thumbnailPreviewDelayMs);
+    }
+}
+
+// 根据鼠标当前全局位置重新判断悬停在哪个卡片上；滚动后卡片移位时也需要调用。
+void QuickBar::updateHoverFromCursor()
+{
+    if (m_cards.isEmpty() || !m_scroll->isVisible()) {
+        setHovered(-1);
+        return;
+    }
+    const QPoint hostPosition = m_candidateHost->mapFromGlobal(QCursor::pos());
+    for (int index = 0; index < m_cards.size(); ++index) {
+        if (m_cards.at(index)->geometry().contains(hostPosition)) {
+            setHovered(index);
+            return;
+        }
+    }
+    setHovered(-1);
 }
 
 // 仅更新配置快照；候选卡片由下一次 rebuild 按新配置重建。
@@ -185,6 +234,9 @@ void QuickBar::openAt(const AppConfig &config, quintptr previousForeground)
     QSize size = this->size();
     if (QScreen *screen = QGuiApplication::screenAt(point)) {
         QRect area = screen->availableGeometry();
+        // 滚动列表内容可能超过屏幕；把窗口限制在可用区域内，其余候选交给滚动条。
+        size = size.boundedTo(area.size() - QSize(24, 48));
+        resize(size);
         if (point.x() + size.width() > area.right())
             point.setX(area.right() - size.width());
         if (point.y() + size.height() > area.bottom())
@@ -238,7 +290,20 @@ void QuickBar::rebuild(const QString &query)
     m_cards.clear();
     while (m_grid->count())
         m_grid->removeItem(m_grid->itemAt(0));
-    m_results = m_engine.search(query, m_config.rows * m_config.columns);
+    if (m_separator) {
+        m_separator->deleteLater();
+        m_separator = nullptr;
+    }
+    // 不限制结果数量：候选区改为可滚动列表，用户能浏览全部已缓存表情包。
+    m_results = m_engine.search(query, -1);
+    const int columns = qMax(1, m_config.columns);
+    const QString wanted = query.trimmed().toLower();
+    int separatorRow = -1;
+    // 有搜索词时，在匹配结果与未匹配结果之间插入一条横向分割线。
+    if (!wanted.isEmpty()) {
+        while (separatorRow < m_results.size() && m_results.at(separatorRow + 1).matchLevel < 5)
+            ++separatorRow;
+    }
     // 有足够分辨率的缓存时优先读取；否则对原图按显示尺寸解码，避免整图解码。
     for (int index = 0; index < m_results.size(); ++index) {
         const SearchResult &result = m_results.at(index);
@@ -285,36 +350,101 @@ void QuickBar::rebuild(const QString &query)
         connect(card, &QWidget::customContextMenuRequested, this, [this, card](const QPoint &position) {
             showContextMenu(card, card->mapToGlobal(position));
         });
-        connect(card, &QuickCandidate::mouseEntered, this, [this, index]() { setCurrent(index); });
+        connect(card, &QuickCandidate::mouseEntered, this, [this, index]() {
+            setHovered(index);
+            setCurrent(index);
+        });
         connect(card, &QuickCandidate::clicked, this, [this, index]() {
             setCurrent(index);
             confirmCurrent();
         });
         connect(card, &QuickCandidate::mouseLeft, this, [this, index]() {
-            if (index == m_current) {
-                m_previewTimer.stop();
-                m_preview->closePreview();
-            }
+            if (index == m_hovered)
+                setHovered(-1);
         });
+        // 悬停离开后清掉空悬停态即可；蓝框保留在最后悬停的卡片上，
+        // 方向键仍从该卡片继续移动。
         m_cards.append(card);
-        m_grid->addWidget(card, index / m_config.columns, index % m_config.columns);
+        m_grid->addWidget(card, index / columns, index % columns);
+        // 分割线独占一整行（跨全部列）；其后的卡片随后统一重排。
+        if (separatorRow >= 0 && index == separatorRow && !m_separator) {
+            m_separator = makeSeparator();
+            m_grid->addWidget(m_separator, index / columns + 1, 0, 1, columns);
+        }
     }
+    // 全部候选都匹配时在末尾补一条分割线，明确下方没有未匹配项。
+    if (separatorRow >= 0 && !m_separator && !m_cards.isEmpty()) {
+        m_separator = makeSeparator();
+        m_grid->addWidget(m_separator, (m_results.size() - 1) / columns + 1, 0, 1, columns);
+    }
+    // 分割线独占一行；其后的未匹配卡片从分割线下一行的行首开始紧凑排列，
+    // 无论匹配段最后一行是否铺满，都不会与分割线同行或留出空格。
+    if (m_separator && separatorRow >= 0) {
+        const int firstRowAfterSeparator = separatorRow / columns + 2;
+        for (int index = separatorRow + 1; index < m_cards.size(); ++index) {
+            const int offset = index - (separatorRow + 1);
+            m_grid->addWidget(m_cards.at(index),
+                              firstRowAfterSeparator + offset / columns, offset % columns);
+        }
+    }
+    syncScrollRange();
     setCurrent(m_cards.isEmpty() ? -1 : 0);
     adjustSize();
 }
 
-// 更新选中边框，并按“常规”页的悬停延迟为当前候选启动原图预览。
+// 创建带提示文字的横向分割线：中间是“未匹配”标签，两侧是较亮的线段。
+QFrame *QuickBar::makeSeparator()
+{
+    auto *separator = new QFrame(m_candidateHost);
+    separator->setAttribute(Qt::WA_StyledBackground);
+    separator->setFixedHeight(2);
+    separator->setStyleSheet(QStringLiteral(
+        "QFrame{background:rgba(255,255,255,120);border:none;border-radius:1px}"));
+    separator->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    return separator;
+}
+
+// 按配置的行列数计算候选区的固定尺寸；行数超出可视高度的部分交给滚动条。
+void QuickBar::syncScrollRange()
+{
+    if (!m_scroll)
+        return;
+    const int columns = qMax(1, m_config.columns);
+    const int spacing = m_grid->horizontalSpacing();
+    const int displaySize = m_config.thumbnailDisplaySize;
+    // 明确给出网格宽度，避免 QScrollArea 回退到很窄的默认尺寸。
+    m_scroll->setFixedWidth(columns * displaySize + (columns - 1) * spacing);
+    const int cardCount = m_cards.size();
+    const int contentRows = qMax(1, (cardCount + columns - 1) / columns + (m_separator ? 1 : 0));
+    const int visibleRows = qBound(1, qMax(1, m_config.rows), contentRows);
+    const int rowHeight = displaySize + m_grid->verticalSpacing();
+    m_scroll->setFixedHeight(visibleRows * rowHeight - m_grid->verticalSpacing());
+}
+
+// 把当前候选滚动到可视区域内，方向键导航时用户始终能看到选中卡片。
+void QuickBar::ensureCurrentVisible(int index)
+{
+    if (!m_scroll || index < 0 || index >= m_cards.size())
+        return;
+    QuickCandidate *card = m_cards.at(index);
+    const int row = card->y();
+    const int cardHeight = card->height();
+    const int visibleHeight = m_scroll->viewport()->height();
+    const int verticalOffset = m_scroll->verticalScrollBar()->value();
+    if (row < verticalOffset)
+        m_scroll->verticalScrollBar()->setValue(row);
+    else if (row + cardHeight > verticalOffset + visibleHeight)
+        m_scroll->verticalScrollBar()->setValue(row + cardHeight - visibleHeight);
+}
+
+// 更新选中边框；键盘移动选中项时同步滚动，但不触发悬停预览。
 void QuickBar::setCurrent(int index)
 {
     m_current = index;
     for (int item = 0; item < m_cards.size(); ++item)
         m_cards.at(item)->setActive(item == index);
-    m_preview->closePreview();
-    m_previewTimer.stop();
-    if (m_previewAllowed && isVisible() && index >= 0 && index < m_results.size() &&
-        m_config.thumbnailPreviewDelayMs > 0) {
-        m_previewTimer.start(m_config.thumbnailPreviewDelayMs);
-    }
+    if (index >= 0)
+        ensureCurrentVisible(index);
 }
 
 // 关闭快捷栏并把当前候选 ID 交给控制器写回剪贴板。
@@ -330,6 +460,13 @@ void QuickBar::confirmCurrent()
 // 把 Escape、Enter 和方向键映射到关闭、确认和网格导航。
 bool QuickBar::eventFilter(QObject *watched, QEvent *event)
 {
+    // 滚动后卡片整体位移，即使鼠标没动悬停的卡片也可能变了，按光标位置重算。
+    if (watched == m_scroll->viewport() && event->type() == QEvent::Scroll) {
+        m_preview->closePreview();
+        m_previewTimer.stop();
+        updateHoverFromCursor();
+        return false;
+    }
     if (watched == m_search && event->type() == QEvent::KeyPress) {
         auto *key = static_cast<QKeyEvent *>(event);
         const int columnCount = qMax(1, m_config.columns);

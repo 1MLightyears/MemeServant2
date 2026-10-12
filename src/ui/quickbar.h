@@ -12,6 +12,8 @@
 
 class QLineEdit;
 class QGridLayout;
+class QScrollArea;
+class QFrame;
 class PreviewPopup;
 
 class QuickCandidate;
@@ -43,6 +45,18 @@ protected:
 private:
     /// 根据搜索词重建候选卡片和缩略图。
     void rebuild(const QString &query);
+    /// 按实际网格行数设定候选区可视高度，最多显示配置的行数。
+    void syncScrollRange();
+    /// 把当前选中的候选卡片滚动到可视区域。
+    void ensureCurrentVisible(int index);
+    /// 更新悬停项并按悬停延迟重启原图预览计时器。
+    void setHovered(int index);
+    /// 按鼠标当前全局位置重新判断悬停在哪个卡片上，滚动后调用。
+    void updateHoverFromCursor();
+    /// 创建横跨网格整行的匹配分割线。
+    QFrame *makeSeparator();
+    /// 返回视口当前能显示的候选行数，用于翻页键步长。
+    int visibleRowCount() const;
     /// 更新当前选中卡片并控制预览计时器。
     void setCurrent(int index);
     /// 将当前卡片写回剪贴板并按配置执行自动粘贴。
@@ -59,11 +73,14 @@ private:
     QVector<SearchResult> m_results;
     QVector<QuickCandidate *> m_cards;
     QLineEdit *m_search = nullptr;
+    QScrollArea *m_scroll = nullptr;
     QWidget *m_candidateHost = nullptr;
     QGridLayout *m_grid = nullptr;
+    QFrame *m_separator = nullptr;
     QTimer m_previewTimer;
     PreviewPopup *m_preview = nullptr;
     int m_current = 0;
+    int m_hovered = -1;
     quintptr m_foregroundWindow = 0;
     bool m_managementActive = false;
     bool m_previewAllowed = false;

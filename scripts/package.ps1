@@ -32,7 +32,7 @@ if (-not (Test-Path $metadataPath)) {
     throw "Missing project metadata: $metadataPath"
 }
 $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
-$zipName = "MemeServant2-{0}-{1}.zip" -f $metadata.version, $metadata.packagePlatform
+$zipName = "MemeServant2-v{0}-{1}.zip" -f $metadata.version, $metadata.packagePlatform
 
 $deploy = Join-Path (Get-Location) "build\deploy"
 $zip = Join-Path (Get-Location) $zipName
@@ -53,19 +53,16 @@ $windeployqt = Join-Path $env:MEMESERVANT2_QT_ROOT "bin\windeployqt.exe"
 & $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-quick-import (Join-Path $deploy "MemeServant2.exe")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# Qt6Svg 在 CMake 里声明为延迟加载，不在普通导入表中，windeployqt 不会复制它；这里
+# Qt6Svg �?CMake 里声明为延迟加载，不在普通导入表中，windeployqt 不会复制它；这里
 # 显式补一份，保证首次打开设置窗口重绘图标时能加载成功。Qt6Network 保持普通导入，
-# windeployqt 会正常复制，不需要单独处理。
-foreach ($delayedModule in @("Qt6Svg.dll")) {
+# windeployqt 会正常复制，不需要单独处理�?foreach ($delayedModule in @("Qt6Svg.dll")) {
     $modulePath = Join-Path $env:MEMESERVANT2_QT_ROOT "bin\$delayedModule"
     if (Test-Path $modulePath) {
         Copy-Item -LiteralPath $modulePath -Destination $deploy -Force
     }
 }
 
-# 只保留运行期真正会加载的插件。qsqlite 是唯一用到的数据库驱动；TUIO 触控、网络状态
-# 后端和证书专用 TLS 后端都不会被这个程序加载，分发它们只会白占体积。
-$sqlDrivers = Join-Path $deploy "sqldrivers"
+# 只保留运行期真正会加载的插件。qsqlite 是唯一用到的数据库驱动；TUIO 触控、网络状�?# 后端和证书专�?TLS 后端都不会被这个程序加载，分发它们只会白占体积�?$sqlDrivers = Join-Path $deploy "sqldrivers"
 if (Test-Path $sqlDrivers) {
     Get-ChildItem -LiteralPath $sqlDrivers -Filter "*.dll" |
         Where-Object { $_.Name -ne "qsqlite.dll" } |
