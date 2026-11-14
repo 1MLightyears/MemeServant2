@@ -8,9 +8,13 @@
 #include <QScopeGuard>
 #include "storage/logservice.h"
 #include <QTextStream>
+#include <initializer_list>
+#include <utility>
 
 namespace {
 constexpr wchar_t kClassName[] = L"MemeServant2ClipboardWindow";
+// 剪贴板图片边长上限：超过视为异常载荷，避免解码/编码超大图。
+constexpr int kMaxClipboardImageSide = 8192;
 
 // 从可移动全局内存复制有限大小的字节，避免锁定失败或异常大小导致崩溃。
 QByteArray globalBytes(HANDLE handle)
@@ -26,6 +30,13 @@ QByteArray globalBytes(HANDLE handle)
     return result;
 }
 
+// 读取指定剪贴板格式的 HGLOBAL 字节；调用方必须已经打开剪贴板。
+QByteArray clipboardBytes(UINT format)
+{
+    const HANDLE handle = GetClipboardData(format);
+    return handle ? globalBytes(handle) : QByteArray();
+}
+
 // 保留剪贴板提供的完整编码块；PNG/JPEG/GIF 解码器会忽略尾部填充。
 QByteArray encodedBytes(QByteArray data)
 {
@@ -33,10 +44,24 @@ QByteArray encodedBytes(QByteArray data)
     return data;
 }
 
+// 判断 DIB 是否真的声明了 alpha 通道：只有 V4/V5 头部里的 AlphaMask 非零才算。
+// 40 字节 BITMAPINFOHEADER 的 32 位 BI_RGB/三掩码 BI_BITFIELDS 没有 alpha 语义：由
+// HBITMAP 转出的 DIB 和部分截图工具会把第 4 字节填 0，若当成 alpha 会得到整张透明图。
+bool dibDeclaresAlpha(const BITMAPINFOHEADER *header, qsizetype headerSize)
+{
+    if (header->biBitCount != 32)
+        return false;
+    if (headerSize >= qsizetype(sizeof(BITMAPV5HEADER)))
+        return reinterpret_cast<const BITMAPV5HEADER *>(header)->bV5AlphaMask != 0;
+    if (headerSize >= qsizetype(sizeof(BITMAPV4HEADER)))
+        return reinterpret_cast<const BITMAPV4HEADER *>(header)->bV4AlphaMask != 0;
+    return false;
+}
+
 // 将 24/32 位 bottom-up 或 top-down DIB 转换为 Qt ARGB 图像。
 QImage imageFromDib(const QByteArray &bytes)
 {
-    if (bytes.size() < int(sizeof(BITMAPINFOHEADER)))
+    if (bytes.size() < qsizetype(sizeof(BITMAPINFOHEADER)))
         return {};
     auto *header = reinterpret_cast<const BITMAPINFOHEADER *>(bytes.constData());
     if (header->biBitCount != 24 && header->biBitCount != 32)
@@ -47,11 +72,30 @@ QImage imageFromDib(const QByteArray &bytes)
         return {};
     const bool topDown = header->biHeight < 0;
     const qsizetype bytesPerPixel = header->biBitCount / 8;
-    const qsizetype stride = ((width * header->biBitCount + 31) / 32) * 4;
-    if (stride <= 0 || stride > (bytes.size() - qsizetype(sizeof(BITMAPINFOHEADER))) / height)
+    const qsizetype stride = ((qsizetype(width) * header->biBitCount + 31) / 32) * 4;
+
+    // CF_DIBV5 的头部是 BITMAPV5HEADER（124 字节），CF_DIB 通常是 BITMAPINFOHEADER（40 字节）。
+    // 像素起点必须按头部自己声明的 biSize 计算，不能写死 sizeof(BITMAPINFOHEADER)：32bpp 的
+    // DIBV5 会因此从头部内部提前 84 字节开始读，整幅图出现 21 像素的水平错位。
+    // V4/V5 头部的颜色掩码已包含在头部长度内；只有 40 字节 BITMAPINFOHEADER + BI_BITFIELDS
+    // 才在头部之后额外跟 3 个 DWORD 掩码，另外 biClrUsed 个 RGBQUAD 调色板也要跳过。
+    const qsizetype headerSize = qsizetype(header->biSize);
+    if (headerSize < qsizetype(sizeof(BITMAPINFOHEADER)) || headerSize > bytes.size())
         return {};
+    qsizetype pixelOffset = headerSize;
+    if (header->biCompression == BI_BITFIELDS && headerSize == qsizetype(sizeof(BITMAPINFOHEADER)))
+        pixelOffset += 3 * qsizetype(sizeof(DWORD));
+    pixelOffset += qsizetype(header->biClrUsed) * qsizetype(sizeof(RGBQUAD));
+    if (pixelOffset > bytes.size() || stride <= 0
+        || stride > (bytes.size() - pixelOffset) / height)
+        return {};
+
+    const bool alphaDeclared = dibDeclaresAlpha(header, headerSize);
     QImage image(width, height, QImage::Format_ARGB32);
-    const char *pixels = bytes.constData() + sizeof(BITMAPINFOHEADER);
+    if (image.isNull())
+        return {};
+    const char *pixels = bytes.constData() + pixelOffset;
+    bool hasNonZeroAlpha = false;
     for (int y = 0; y < height; ++y) {
         QRgb *target = reinterpret_cast<QRgb *>(image.scanLine(topDown ? y : height - y - 1));
         const char *source = pixels + stride * y;
@@ -60,9 +104,22 @@ QImage imageFromDib(const QByteArray &bytes)
             const uchar blue = pixel[0];
             const uchar green = pixel[1];
             const uchar red = pixel[2];
-            const uchar alpha = bytesPerPixel == 4 ? pixel[3] : 255;
+            // 没有 alpha 声明的 32bpp DIB 第 4 字节不可信（常见为 0），一律按不透明处理。
+            const uchar alpha = bytesPerPixel == 4 && alphaDeclared ? pixel[3] : 255;
+            if (alpha != 0)
+                hasNonZeroAlpha = true;
             target[x] = qRgba(red, green, blue, alpha);
         }
+    }
+    // 极少数 DIBV5 声明了 AlphaMask 却没有填 alpha（全 0），整张图完全透明没有可捕获内容；
+    // 按不透明兜底，避免用户存下一张看不见的图。
+    if (alphaDeclared && !hasNonZeroAlpha) {
+        for (int y = 0; y < height; ++y) {
+            QRgb *line = reinterpret_cast<QRgb *>(image.scanLine(y));
+            for (int x = 0; x < width; ++x)
+                line[x] |= 0xff000000u;
+        }
+        LogService::instance().warning(QStringLiteral("剪贴板 DIB 声明了透明度但 alpha 全为 0，已按不透明处理"));
     }
     return image;
 }
@@ -178,14 +235,37 @@ HANDLE allocateBytes(const QByteArray &bytes)
 }
 }
 
-// 注册自写标记和常见图片格式，后续读写复用这些格式 ID。
+// 注册自写标记和常见图片编码格式；同一编码的多个注册名归为一族，共用同一套读取逻辑。
 WinClipboard::WinClipboard(QObject *parent)
     : QObject(parent)
 {
     m_ownerMarker = RegisterClipboardFormatW(L"MemeServant2.SelfWrite.v1");
-    m_pngFormat = RegisterClipboardFormatW(L"PNG");
-    m_gifFormat = RegisterClipboardFormatW(L"image/gif");
-    m_jpegFormat = RegisterClipboardFormatW(L"JPEG");
+    // 每个编码族的首个名字沿用历史写入名，写回行为保持不变；其余名字只用于读取兼容。
+    const auto registerFamily = [](const QString &encoding, std::initializer_list<const wchar_t *> names) {
+        EncodedFormatFamily family;
+        family.encoding = encoding;
+        family.formats.reserve(static_cast<qsizetype>(names.size()));
+        for (const wchar_t *name : names) {
+            const UINT format = RegisterClipboardFormatW(name);
+            if (format != 0 && !family.formats.contains(format))
+                family.formats.append(format);
+        }
+        return family;
+    };
+    // GIF 排在最前：只有来源愿意把原始 GIF 字节放进注册格式时才能保住动图，PNG/JPEG 都是静态帧。
+    m_encodedFormats.append(registerFamily(QStringLiteral("gif"), {L"image/gif", L"GIF"}));
+    m_encodedFormats.append(registerFamily(QStringLiteral("png"), {L"PNG", L"image/png"}));
+    m_encodedFormats.append(registerFamily(QStringLiteral("jpg"), {L"JPEG", L"JFIF", L"image/jpeg"}));
+}
+
+// 返回编码族的首选注册格式 ID：读取时作为该族首个尝试项，写入时沿用历史注册名。
+UINT WinClipboard::encodedFormatId(const QString &encoding) const
+{
+    for (const EncodedFormatFamily &family : m_encodedFormats) {
+        if (family.encoding == encoding)
+            return family.formats.value(0);
+    }
+    return 0;
 }
 
 // 停止监听、销毁消息窗口并注销窗口类。
@@ -257,63 +337,102 @@ void WinClipboard::stop()
         RemoveClipboardFormatListener(m_window);
 }
 
-// 按 GIF、PNG、JPEG、DIB 优先级读取单个图片并填充尺寸和原始编码。
+// 按注册编码格式、原生 DIBV5、CF_DIB 的优先级读取单个图片。剪贴板全局锁内只做格式判断和
+// 字节拷贝，DIB 转换与 PNG 编码放到关闭剪贴板之后，避免长时间阻塞其他程序。
 CapturedImage WinClipboard::readClipboard()
 {
     CapturedImage result;
+    QByteArray payload;
+    QString encoding;   // 非空表示 payload 是注册编码格式（png/jpg/gif）的字节流
+    UINT dibFormat = 0; // 非 0 表示 payload 是 DIB 字节流
+
     if (!OpenClipboard(nullptr))
         return result;
-    auto closeGuard = qScopeGuard([] { CloseClipboard(); });
-    if (GetClipboardData(m_ownerMarker)) {
-        result.selfWritten = true;
-        return result;
-    }
-    if (IsClipboardFormatAvailable(CF_HDROP))
-        return result;
+    {
+        auto closeGuard = qScopeGuard([] { CloseClipboard(); });
 
-    const bool hasPng = IsClipboardFormatAvailable(m_pngFormat);
-    const bool hasGif = IsClipboardFormatAvailable(m_gifFormat);
-    const bool hasJpeg = IsClipboardFormatAvailable(m_jpegFormat);
-    const bool hasDib = IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5);
-    if (!hasPng && !hasGif && !hasJpeg && !hasDib)
-        return result;
+        // 一次枚举同时拿到格式集合和顺序：集合用于判断可用性，顺序用于区分原生 DIBV5 与系统合成项。
+        QVector<UINT> formats;
+        UINT format = 0;
+        while ((format = EnumClipboardFormats(format)) != 0)
+            formats.append(format);
+        const auto hasFormat = [&formats](UINT wanted) { return formats.contains(wanted); };
 
-    UINT selectedFormat = 0;
-    QString format;
-    if (hasGif) {
-        selectedFormat = m_gifFormat;
-        format = QStringLiteral("gif");
-    } else if (hasPng) {
-        selectedFormat = m_pngFormat;
-        format = QStringLiteral("png");
-    } else if (hasJpeg) {
-        selectedFormat = m_jpegFormat;
-        format = QStringLiteral("jpg");
-    }
-    if (selectedFormat) {
-        HANDLE handle = GetClipboardData(selectedFormat);
-        if (handle) {
-            result.encoded = encodedBytes(globalBytes(handle));
-            result.format = format;
+        // 本程序写回的内容必须跳过，否则会形成捕获循环。
+        if (m_ownerMarker && hasFormat(m_ownerMarker)) {
+            result.selfWritten = true;
+            return result;
+        }
+        // 复制的是文件而不是图片时剪贴板里没有像素数据，交给系统粘贴即可。
+        if (hasFormat(CF_HDROP))
+            return result;
+
+        // 系统会把可转换格式追加在枚举末尾：先遇到 CF_DIB 再遇到 CF_DIBV5 说明后者是合成项。
+        // 此时直接读 CF_DIB，既省掉一次系统转换，也避免合成导致原始透明度丢失（与 Qt 的判断一致）。
+        bool hasDibV5 = false;
+        bool hasDib = false;
+        bool nativeDibV5 = false;
+        for (UINT available : formats) {
+            if (available == CF_DIBV5) {
+                hasDibV5 = true;
+                nativeDibV5 = !hasDib;
+                if (nativeDibV5)
+                    break;
+            } else if (available == CF_DIB) {
+                hasDib = true;
+            }
+        }
+
+        // 同一编码可能有多个注册名，按族内顺序逐个尝试，读取逻辑完全共用。
+        for (const EncodedFormatFamily &family : m_encodedFormats) {
+            for (UINT candidate : family.formats) {
+                if (!hasFormat(candidate))
+                    continue;
+                payload = encodedBytes(clipboardBytes(candidate));
+                if (payload.isEmpty())
+                    continue;
+                encoding = family.encoding;
+                break;
+            }
+            if (!encoding.isEmpty())
+                break;
+        }
+        if (encoding.isEmpty()) {
+            if (!hasDib && !hasDibV5)
+                return result;
+            // 原生 DIBV5 优先；其余情况优先读 CF_DIB，避免系统把 DIB 再合成一份 DIBV5。
+            if (nativeDibV5)
+                dibFormat = CF_DIBV5;
+            else if (hasDib)
+                dibFormat = CF_DIB;
+            else
+                dibFormat = CF_DIBV5;
+            payload = clipboardBytes(dibFormat);
+            if (payload.isEmpty())
+                dibFormat = 0;
         }
     }
-    if (!result.encoded.isEmpty()) {
+    // 到这里剪贴板已经关闭，解码、DIB 转换和 PNG 编码不再持有全局锁。
+
+    if (!encoding.isEmpty()) {
+        result.encoded = std::move(payload);
+        result.format = encoding;
         result.isValid = decodeSize(result.encoded, &result.width, &result.height);
-    } else if (hasDib) {
-        const UINT dibFormat = IsClipboardFormatAvailable(CF_DIBV5) ? CF_DIBV5 : CF_DIB;
-        HANDLE handle = GetClipboardData(dibFormat);
-        const QByteArray bytes = handle ? globalBytes(handle) : QByteArray();
-        QImage image = imageFromDib(bytes);
+    } else if (dibFormat) {
+        const QImage image = imageFromDib(payload);
         if (!image.isNull()) {
-            QBuffer pngBuffer(&result.encoded);
-            pngBuffer.open(QIODevice::WriteOnly);
-            result.isValid = image.save(&pngBuffer, "PNG");
-            result.format = QStringLiteral("png");
             result.width = image.width();
             result.height = image.height();
+            // 超限图不再做整图 PNG 编码，交给末尾统一的尺寸校验丢弃。
+            if (result.width <= kMaxClipboardImageSide && result.height <= kMaxClipboardImageSide) {
+                QBuffer pngBuffer(&result.encoded);
+                pngBuffer.open(QIODevice::WriteOnly);
+                result.isValid = image.save(&pngBuffer, "PNG");
+                result.format = QStringLiteral("png");
+            }
         }
     }
-    if (result.isValid && (result.width > 8192 || result.height > 8192)) {
+    if (result.width > kMaxClipboardImageSide || result.height > kMaxClipboardImageSide) {
         LogService::instance().warning(QStringLiteral("剪贴板图片尺寸异常，已忽略"));
         result.isValid = false;
     }
@@ -405,14 +524,15 @@ bool WinClipboard::writeImage(const CapturedImage &captured, QString *error)
         if (!image.save(&pngBuffer, "PNG"))
             png.clear();
     }
+    // 写入仍使用每个编码族的历史注册名（族内首个格式），写回行为保持不变。
     const bool pngWritten = !png.isEmpty()
-                            && putBytes(m_pngFormat, png, QStringLiteral("PNG"));
+                            && putBytes(encodedFormatId(QStringLiteral("png")), png, QStringLiteral("PNG"));
 
     // Also retain the original encoded stream when it has a distinct registered format.
     if (format == QLatin1String("gif"))
-        putBytes(m_gifFormat, encoded, QStringLiteral("GIF原图"));
+        putBytes(encodedFormatId(QStringLiteral("gif")), encoded, QStringLiteral("GIF原图"));
     else if (format == QLatin1String("jpg") || format == QLatin1String("jpeg"))
-        putBytes(m_jpegFormat, encoded, QStringLiteral("JPEG原图"));
+        putBytes(encodedFormatId(QStringLiteral("jpg")), encoded, QStringLiteral("JPEG原图"));
 
     const bool dibWritten = putBytes(CF_DIB, imageToDib(image), QStringLiteral("CF_DIB"));
     // 只有原图确实带透明像素时才投递 CF_DIBV5：这份 32 位 DIB 会一直留到剪贴板被替换，

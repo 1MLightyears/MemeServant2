@@ -127,6 +127,9 @@ CMakeLists.txt configure_file()
 改动时注意：
 
 - `selfWritten` 必须继续区分程序写回的图片，避免捕获循环。
+- 读取路径按编码格式族依次尝试注册名（GIF、PNG、JPEG 各自有多个约定名，归族后共用同一套处理逻辑）；仅当 CF_DIBV5 是剪贴板原生格式时才直接读它，否则读 CF_DIB，避免系统合成的额外转换和透明度丢失。原生性用 `EnumClipboardFormats` 的枚举顺序判断（系统把可转换格式追加在末尾，与 Qt 的做法一致）。
+- 没有 alpha 掩码的 32 位 DIB（BITMAPINFOHEADER 的 BI_RGB 或三掩码 BI_BITFIELDS）按不透明处理；DIBV5 声明了 AlphaMask 但数据 alpha 全为 0 时按不透明兜底，避免存出全透明图片。
+- `OpenClipboard` 期间只做格式判断和字节拷贝，解码、DIB 转换和 PNG 编码都在关闭剪贴板后进行，避免长时间占用全局剪贴板锁。
 - 捕获浮窗只响应用户保存；AI 结果只填入输入框，不能自动落盘。
 - 保存流程先写原图，再写数据库；数据库失败时需要移除已写入的文件。
 - nickname 的清洗和唯一性判断统一走 `NicknameUtils`。
