@@ -53,6 +53,7 @@ qt_add_executable(MemeServant2 WIN32
     src/platforms/win/winautostart.cpp
     src/platforms/win/winwindoweffects.cpp
     src/ai/openaicompatibleprovider.cpp
+    src/ai/gifcompat.cpp
     src/prompts/prompts.qrc
     src/resources/app.qrc
     src/thumbnail/thumbnaillistener.cpp

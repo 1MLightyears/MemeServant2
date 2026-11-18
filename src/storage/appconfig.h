@@ -29,15 +29,23 @@ struct AppConfig
     QString apiKeyEnvName;
     bool hasStoredApiKey = false;
     bool autoAi = false;
+    /// GIF兼容模式：捕获到 GIF 时把多帧拼接为长图再发给 AI（默认关闭，关闭时取首帧）。
+    bool gifAiCompatMode = false;
     int aiNicknameExampleCount = 8;
     int thumbnailCacheSize = 256;
     /// 搜索时未匹配候选卡片的整体不透明度（百分比，0~100）；100 表示不降级。
     int unmatchedCardOpacity = 75;
     /// 匹配分割线上下的呼吸空间（像素，0~100）。
     int separatorSpacing = 14;
+    /// 调试模式：开启后日志同时追加写入程序根目录的调试日志文件，并启用 Alt+D 剪贴板诊断。
+    bool debugMode = false;
+    /// 调试日志文件名（只允许纯文件名，写入程序根目录；空值回退 debug.log，后缀固定为 .log）。
+    QString debugLogFileName = QStringLiteral("debug.log");
 
     /// 将空图库路径解析为程序目录下的 memes 子目录。
     QString resolvedGalleryPath(const QString &applicationDirectory) const;
+    /// 将调试日志文件名清洗为纯文件名并补全 .log 后缀；非法或空值回退 debug.log。
+    QString resolvedDebugLogFileName() const;
 };
 
 class ConfigStore

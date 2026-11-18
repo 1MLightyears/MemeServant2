@@ -1,26 +1,49 @@
-// 只处理一个逻辑图片对象；文件列表和本程序自写事件不会触发捕获。
+// 只处理一个逻辑图片对象；优先从剪贴板引用的原始文件恢复图片，本程序自写事件不会触发捕获。
 #include "platforms/win/winclipboard.h"
 
 #include <QBuffer>
+#include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QHash>
 #include <QImage>
 #include <QImageReader>
+#include <QRegularExpression>
 #include <QScopeGuard>
+#include <QStringList>
 #include "storage/logservice.h"
-#include <QTextStream>
+#include <QThread>
+#include <QUrl>
+#include <QXmlStreamReader>
 #include <initializer_list>
 #include <utility>
+
+#include "clipboard/imagebytes.h"
 
 namespace {
 constexpr wchar_t kClassName[] = L"MemeServant2ClipboardWindow";
 // 剪贴板图片边长上限：超过视为异常载荷，避免解码/编码超大图。
 constexpr int kMaxClipboardImageSide = 8192;
+// 剪贴板格式和它引用的文件/网页内容共用的字节上限，避免异常数据把内存拉满。
+constexpr qsizetype kMaxClipboardPayloadBytes = 64 * 1024 * 1024;
+// Markdown 兜底只解析短文本；超过该长度不可能是单条图片引用。
+constexpr qsizetype kMaxReferenceTextBytes = 64 * 1024;
+
+// 诊断开关：环境变量 MEMESERVANT2_CLIPBOARD_DEBUG=1，或设置中的调试模式开启时，输出格式清单、
+// 引用路径等详细诊断信息，便于定位 QQ/微信/浏览器行为。调试模式可在运行期切换，因此不缓存结果。
+bool clipboardDebugEnabled()
+{
+    return qEnvironmentVariableIsSet("MEMESERVANT2_CLIPBOARD_DEBUG")
+           || LogService::instance().isDebugFileEnabled();
+}
 
 // 从可移动全局内存复制有限大小的字节，避免锁定失败或异常大小导致崩溃。
 QByteArray globalBytes(HANDLE handle)
 {
     const SIZE_T size = GlobalSize(handle);
-    if (!size || size > 64 * 1024 * 1024)
+    if (!size || size > static_cast<SIZE_T>(kMaxClipboardPayloadBytes))
         return {};
     const void *data = GlobalLock(handle);
     if (!data)
@@ -35,6 +58,26 @@ QByteArray clipboardBytes(UINT format)
 {
     const HANDLE handle = GetClipboardData(format);
     return handle ? globalBytes(handle) : QByteArray();
+}
+
+// 枚举当前剪贴板格式：formats 返回注册格式 ID；includeNames 为 true 时才查询可读名称
+// （匿名格式用数字 ID）。调用方必须已经打开剪贴板。
+QStringList clipboardFormatNames(QVector<UINT> *formats, bool includeNames)
+{
+    if (formats)
+        formats->clear();
+    QStringList names;
+    UINT format = 0;
+    while ((format = EnumClipboardFormats(format)) != 0) {
+        if (formats)
+            formats->append(format);
+        if (!includeNames)
+            continue;
+        wchar_t name[128] = {};
+        const int length = GetClipboardFormatNameW(format, name, 128);
+        names.append(length > 0 ? QString::fromWCharArray(name, length) : QString::number(format));
+    }
+    return names;
 }
 
 // 保留剪贴板提供的完整编码块；PNG/JPEG/GIF 解码器会忽略尾部填充。
@@ -122,20 +165,6 @@ QImage imageFromDib(const QByteArray &bytes)
         LogService::instance().warning(QStringLiteral("剪贴板 DIB 声明了透明度但 alpha 全为 0，已按不透明处理"));
     }
     return image;
-}
-
-// 只读取编码头得到宽高，避免捕获时为尺寸校验解码整张图片。
-bool decodeSize(const QByteArray &bytes, int *width, int *height)
-{
-    QBuffer buffer(const_cast<QByteArray *>(&bytes));
-    buffer.open(QIODevice::ReadOnly);
-    QImageReader reader(&buffer);
-    const QSize size = reader.size();
-    if (!size.isValid())
-        return false;
-    *width = size.width();
-    *height = size.height();
-    return true;
 }
 
 // 生成兼容性最好的 bottom-up 24 位 CF_DIB 数据。
@@ -233,6 +262,283 @@ HANDLE allocateBytes(const QByteArray &bytes)
     GlobalUnlock(global);
     return global;
 }
+
+// 从 CF_HDROP 读取文件路径；调用方必须已经打开剪贴板。只拷贝路径，不在这里读文件内容。
+QStringList clipboardDropPaths()
+{
+    const HANDLE handle = GetClipboardData(CF_HDROP);
+    if (!handle)
+        return {};
+    const auto drop = reinterpret_cast<HDROP>(handle);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    QStringList paths;
+    // 捕获只处理单个逻辑图片，异常多的文件列表直接截断。
+    for (UINT index = 0; index < qMin<UINT>(count, 16); ++index) {
+        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+        if (!length)
+            continue;
+        QVector<wchar_t> buffer(static_cast<qsizetype>(length) + 1);
+        if (DragQueryFileW(drop, index, buffer.data(), length + 1) == length)
+            paths.append(QString::fromWCharArray(buffer.constData(), static_cast<qsizetype>(length)));
+    }
+    return paths;
+}
+
+// 前置声明：富文本 XML 解析失败时的按属性名兜底分支会用到。
+QString unescapeMarkupAttribute(QString value);
+
+// 解析 QQ/微信富文本剪贴板格式（QQ_Unicode_RichEdit_Format 等）里的图片路径。
+// 格式是 UTF-8 XML，后面可能跟着全局内存补零；EditElement 的 filepath 指向原始表情/图片文件。
+QStringList richEditFilePaths(const QByteArray &document)
+{
+    QStringList paths;
+    if (document.isEmpty() || document.size() > kMaxClipboardPayloadBytes)
+        return paths;
+    const qsizetype nul = document.indexOf('\0');
+    const QByteArray xmlBytes = nul < 0 ? document : document.left(nul);
+    if (xmlBytes.isEmpty())
+        return paths;
+    const QString xml = QString::fromUtf8(xmlBytes);
+    QXmlStreamReader reader(xml);
+    while (!reader.atEnd()) {
+        const QXmlStreamReader::TokenType token = reader.readNext();
+        if (token == QXmlStreamReader::StartElement
+            && reader.name() == QStringLiteral("EditElement")) {
+            const QString filePath =
+                reader.attributes().value(QLatin1String("filepath")).toString().trimmed();
+            if (!filePath.isEmpty())
+                paths.append(filePath);
+        }
+        if (reader.hasError())
+            break;
+    }
+    // 私有格式偶尔会在 XML 前后带非 XML 数据；解析失败时退回按属性名抓取，避免整条线索丢失。
+    if (paths.isEmpty()) {
+        static const QRegularExpression attributePattern(
+            QStringLiteral(R"RX(\bfilepath\s*=\s*"([^"]*)")RX"));
+        QRegularExpressionMatchIterator matches = attributePattern.globalMatch(xml);
+        while (matches.hasNext()) {
+            const QString filePath =
+                unescapeMarkupAttribute(matches.next().captured(1)).trimmed();
+            if (!filePath.isEmpty())
+                paths.append(filePath);
+        }
+    }
+    return paths;
+}
+
+// 解码 HTML/XML 属性里的常见实体；先处理具名实体，最后处理 &amp; 避免二次解码。
+QString unescapeMarkupAttribute(QString value)
+{
+    value.replace(QStringLiteral("&quot;"), QStringLiteral("\""));
+    value.replace(QStringLiteral("&apos;"), QStringLiteral("'"));
+    value.replace(QStringLiteral("&#39;"), QStringLiteral("'"));
+    value.replace(QStringLiteral("&lt;"), QStringLiteral("<"));
+    value.replace(QStringLiteral("&gt;"), QStringLiteral(">"));
+    value.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+    return value;
+}
+
+// 调试模式专用：输出富文本 XML 的元素名和属性名（不输出任何属性值），
+// 用于确认 QQ/微信私有格式的结构是否发生变化；消息正文不会进入日志。
+QString describeRichEditStructure(const QByteArray &document)
+{
+    if (document.isEmpty() || document.size() > kMaxClipboardPayloadBytes)
+        return QStringLiteral("（空）");
+    const qsizetype nul = document.indexOf('\0');
+    const QByteArray xmlBytes = nul < 0 ? document : document.left(nul);
+    if (xmlBytes.isEmpty())
+        return QStringLiteral("（空）");
+    QStringList elements;
+    QXmlStreamReader reader(QString::fromUtf8(xmlBytes));
+    while (!reader.atEnd() && elements.size() < 20) {
+        const QXmlStreamReader::TokenType token = reader.readNext();
+        if (token != QXmlStreamReader::StartElement)
+            continue;
+        QString descriptor = reader.name().toString();
+        QStringList attributeNames;
+        for (const QXmlStreamAttribute &attribute : reader.attributes())
+            attributeNames.append(attribute.name().toString());
+        if (!attributeNames.isEmpty()) {
+            descriptor += QLatin1Char('[') + attributeNames.join(QLatin1Char(','))
+                          + QLatin1Char(']');
+        }
+        elements.append(descriptor);
+        if (reader.hasError())
+            break;
+    }
+    if (elements.isEmpty())
+        return QStringLiteral("（非XML或编码不受支持）");
+    return elements.join(QStringLiteral(" > "));
+}
+
+// 读取 CF_HTML 头部里的字节偏移（StartFragment/EndFragment 等）。
+qsizetype htmlHeaderOffset(const QByteArray &data, const QByteArray &header)
+{
+    const qsizetype start = data.indexOf(header);
+    if (start < 0)
+        return -1;
+    qsizetype position = start + header.size();
+    while (position < data.size() && (data.at(position) == ' ' || data.at(position) == '\t'))
+        ++position;
+    const qsizetype numberStart = position;
+    qsizetype number = 0;
+    while (position < data.size() && data.at(position) >= '0' && data.at(position) <= '9') {
+        number = number * 10 + (data.at(position) - '0');
+        ++position;
+    }
+    return position == numberStart ? -1 : number;
+}
+
+struct HtmlClipboard
+{
+    QStringList imageSources;
+};
+
+// 解析 CF_HTML 里的 <img src> 本地图片引用（QQ/微信富文本等会写 file:// 路径）。
+HtmlClipboard parseHtmlClipboard(const QByteArray &bytes)
+{
+    HtmlClipboard result;
+    if (bytes.isEmpty() || bytes.size() > kMaxClipboardPayloadBytes)
+        return result;
+    const qsizetype nul = bytes.indexOf('\0');
+    const QByteArray document = nul < 0 ? bytes : bytes.left(nul);
+    const qsizetype fragmentStart = htmlHeaderOffset(document, QByteArrayLiteral("StartFragment:"));
+    const qsizetype fragmentEnd = htmlHeaderOffset(document, QByteArrayLiteral("EndFragment:"));
+    QByteArray fragment = document;
+    if (fragmentStart >= 0 && fragmentEnd > fragmentStart && fragmentEnd <= document.size())
+        fragment = document.mid(fragmentStart, fragmentEnd - fragmentStart);
+    static const QRegularExpression imageSourcePattern(
+        QStringLiteral(R"RX(<img\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))RX"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator matches = imageSourcePattern.globalMatch(QString::fromUtf8(fragment));
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        QString source = match.captured(1);
+        if (source.isEmpty())
+            source = match.captured(2);
+        if (source.isEmpty())
+            source = match.captured(3);
+        source = unescapeMarkupAttribute(source).trimmed();
+        if (!source.isEmpty())
+            result.imageSources.append(source);
+    }
+    return result;
+}
+
+// 把剪贴板引用（file: URL、Windows 绝对路径、Markdown 路径）转成本地文件路径。
+QString localPathFromReference(const QString &reference)
+{
+    QString value = reference.trimmed();
+    if (value.size() >= 2 && value.startsWith(QLatin1Char('"')) && value.endsWith(QLatin1Char('"')))
+        value = value.mid(1, value.size() - 2).trimmed();
+    if (value.isEmpty() || value.size() > 4096
+        || value.startsWith(QStringLiteral("data:"), Qt::CaseInsensitive))
+        return {};
+    if (value.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl url(value);
+        if (url.scheme().compare(QStringLiteral("file"), Qt::CaseInsensitive) == 0) {
+            const QString localFile = url.toLocalFile();
+            if (!localFile.isEmpty())
+                return QDir::fromNativeSeparators(localFile);
+        }
+        // QQ 等应用偶尔写入未转义空格/中文的 file: 路径，QUrl 解析失败时手工去掉前缀再解码百分号。
+        QString manual = value.mid(5);
+        while (manual.startsWith(QLatin1Char('/')))
+            manual.remove(0, 1);
+        manual = QUrl::fromPercentEncoding(manual.toUtf8());
+        if (manual.size() > 1 && manual.at(1) == QLatin1Char(':'))
+            return QDir::fromNativeSeparators(manual);
+        return {};
+    }
+    if (value.contains(QStringLiteral("://")))
+        return {};
+    const QString native = QDir::fromNativeSeparators(value);
+    // 相对路径缺少基准目录，无法安全解析；只接受绝对路径和 UNC 路径。
+    return QDir::isAbsolutePath(native) ? native : QString();
+}
+
+// 解码 HTML/Markdown 里内嵌的 data:image/gif;base64 数据，无网络时也能拿到动图。
+QByteArray decodeGifDataUri(const QString &reference)
+{
+    const QString value = reference.trimmed();
+    if (!value.startsWith(QStringLiteral("data:image/gif"), Qt::CaseInsensitive))
+        return {};
+    const qsizetype separator = value.indexOf(QStringLiteral(";base64,"), 0, Qt::CaseInsensitive);
+    if (separator < 0)
+        return {};
+    constexpr int kBase64MarkerLength = 8; // ";base64,"
+    const QByteArray bytes = QByteArray::fromBase64(value.mid(separator + kBase64MarkerLength).toLatin1());
+    if (bytes.isEmpty() || bytes.size() > kMaxClipboardPayloadBytes)
+        return {};
+    return ImageBytes::formatOf(bytes) == QStringLiteral("gif") ? bytes : QByteArray();
+}
+
+// 读取剪贴板引用的本地文件；刚复制时来源程序可能还在写临时文件，短暂重试避免读到半截数据。
+QByteArray readReferencedImageFile(const QString &path)
+{
+    // 拒绝设备命名空间，避免剪贴板文本构造出 \\\\.\\ 之类的特殊路径。
+    if (path.startsWith(QStringLiteral("\\\\.\\")))
+        return {};
+    const QFileInfo info(path);
+    if (!info.isFile())
+        return {};
+    const qint64 expectedSize = info.size();
+    if (expectedSize <= 0 || expectedSize > kMaxClipboardPayloadBytes)
+        return {};
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) {
+            // 只读到上限多一个字节，避免文件在检查后继续增长时一次性读进超大内容。
+            const QByteArray bytes = file.read(kMaxClipboardPayloadBytes + 1);
+            if (bytes.size() > 0 && bytes.size() <= kMaxClipboardPayloadBytes
+                && !ImageBytes::formatOf(bytes).isEmpty())
+                return bytes;
+        }
+        if (attempt < 2)
+            QThread::msleep(20);
+    }
+    return {};
+}
+
+// 读取剪贴板纯文本；只用于 Markdown 图片引用的兜底，因此限制长度。
+QString clipboardPlainText()
+{
+    const HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    if (!handle)
+        return {};
+    const SIZE_T bytes = GlobalSize(handle);
+    if (bytes <= sizeof(wchar_t) || bytes > static_cast<SIZE_T>(kMaxReferenceTextBytes))
+        return {};
+    const void *data = GlobalLock(handle);
+    if (!data)
+        return {};
+    QString text = QString::fromWCharArray(static_cast<const wchar_t *>(data),
+                                           static_cast<qsizetype>(bytes / sizeof(wchar_t)));
+    GlobalUnlock(handle);
+    const qsizetype nul = text.indexOf(QChar(0));
+    if (nul >= 0)
+        text.truncate(nul);
+    return text;
+}
+
+// 从纯文本里识别“整个剪贴板就是一条 Markdown 图片引用”的场景（如 Obsidian/Typora 复制图片）。
+// 只接受单行且整行都是图片语法的文本，避免复制普通聊天文本时误触发。
+QString markdownImageTarget(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty() || trimmed.size() > 2048
+        || trimmed.contains(QLatin1Char('\n')) || trimmed.contains(QLatin1Char('\r')))
+        return {};
+    // 兼容两种写法：![alt](<带空格的路径>) 和 ![alt](普通路径)；可带 "title"。
+    static const QRegularExpression pattern(
+        QStringLiteral(R"RX(^!\[[^\]]*\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)$)RX"));
+    const QRegularExpressionMatch match = pattern.match(trimmed);
+    if (!match.hasMatch())
+        return {};
+    const QString bracketed = match.captured(1).trimmed();
+    return bracketed.isEmpty() ? match.captured(2).trimmed() : bracketed;
+}
 }
 
 // 注册自写标记和常见图片编码格式；同一编码的多个注册名归为一族，共用同一套读取逻辑。
@@ -256,6 +562,10 @@ WinClipboard::WinClipboard(QObject *parent)
     m_encodedFormats.append(registerFamily(QStringLiteral("gif"), {L"image/gif", L"GIF"}));
     m_encodedFormats.append(registerFamily(QStringLiteral("png"), {L"PNG", L"image/png"}));
     m_encodedFormats.append(registerFamily(QStringLiteral("jpg"), {L"JPEG", L"JFIF", L"image/jpeg"}));
+    // 剪贴板引用格式：浏览器图片的 HTML 地址，以及 QQ/微信富文本里的原始文件路径。
+    m_htmlFormat = RegisterClipboardFormatW(L"HTML Format");
+    m_qqRichFormat = RegisterClipboardFormatW(L"QQ_Unicode_RichEdit_Format");
+    m_qqRichLegacyFormat = RegisterClipboardFormatW(L"QQ_RichEdit_Format");
 }
 
 // 返回编码族的首选注册格式 ID：读取时作为该族首个尝试项，写入时沿用历史注册名。
@@ -337,14 +647,21 @@ void WinClipboard::stop()
         RemoveClipboardFormatListener(m_window);
 }
 
-// 按注册编码格式、原生 DIBV5、CF_DIB 的优先级读取单个图片。剪贴板全局锁内只做格式判断和
-// 字节拷贝，DIB 转换与 PNG 编码放到关闭剪贴板之后，避免长时间阻塞其他程序。
+// 按“剪贴板引用的原始文件 > 内嵌 GIF > 注册编码格式 > DIB”的优先级读取单个图片，并附带
+// 可联网获取的网页 GIF 地址。剪贴板全局锁内只做格式判断和字节/路径拷贝，文件读取、解码、
+// DIB 转换和 PNG 编码都放到关闭剪贴板之后，避免长时间阻塞其他程序。
 CapturedImage WinClipboard::readClipboard()
 {
     CapturedImage result;
     QByteArray payload;
     QString encoding;   // 非空表示 payload 是注册编码格式（png/jpg/gif）的字节流
     UINT dibFormat = 0; // 非 0 表示 payload 是 DIB 字节流
+    QStringList dropPaths;
+    QVector<QByteArray> richEditDocuments;
+    QByteArray htmlPayload;
+    QString plainText;
+    // 调试模式/环境变量开启时输出详细诊断；同一次读取内保持不变。
+    const bool verbose = clipboardDebugEnabled();
 
     if (!OpenClipboard(nullptr))
         return result;
@@ -353,19 +670,25 @@ CapturedImage WinClipboard::readClipboard()
 
         // 一次枚举同时拿到格式集合和顺序：集合用于判断可用性，顺序用于区分原生 DIBV5 与系统合成项。
         QVector<UINT> formats;
-        UINT format = 0;
-        while ((format = EnumClipboardFormats(format)) != 0)
-            formats.append(format);
-        const auto hasFormat = [&formats](UINT wanted) { return formats.contains(wanted); };
+        const QStringList formatNames = clipboardFormatNames(&formats, verbose);
+        const auto hasFormat = [&formats](UINT wanted) {
+            return wanted != 0 && formats.contains(wanted);
+        };
+        // 诊断开关：输出格式清单，便于定位 QQ/微信/浏览器的私有格式。
+        if (verbose)
+            LogService::instance().info(QStringLiteral("剪贴板格式 %1 个：%2")
+                                            .arg(formats.size())
+                                            .arg(formatNames.join(QStringLiteral("、"))));
 
         // 本程序写回的内容必须跳过，否则会形成捕获循环。
-        if (m_ownerMarker && hasFormat(m_ownerMarker)) {
+        if (hasFormat(m_ownerMarker)) {
             result.selfWritten = true;
             return result;
         }
-        // 复制的是文件而不是图片时剪贴板里没有像素数据，交给系统粘贴即可。
+
+        // 文件列表不再直接忽略：QQ/微信复制图片时 FileDrop 可能直接指向原始文件。
         if (hasFormat(CF_HDROP))
-            return result;
+            dropPaths = clipboardDropPaths();
 
         // 系统会把可转换格式追加在枚举末尾：先遇到 CF_DIB 再遇到 CF_DIBV5 说明后者是合成项。
         // 此时直接读 CF_DIB，既省掉一次系统转换，也避免合成导致原始透明度丢失（与 Qt 的判断一致）。
@@ -397,9 +720,7 @@ CapturedImage WinClipboard::readClipboard()
             if (!encoding.isEmpty())
                 break;
         }
-        if (encoding.isEmpty()) {
-            if (!hasDib && !hasDibV5)
-                return result;
+        if (encoding.isEmpty() && (hasDib || hasDibV5)) {
             // 原生 DIBV5 优先；其余情况优先读 CF_DIB，避免系统把 DIB 再合成一份 DIBV5。
             if (nativeDibV5)
                 dibFormat = CF_DIBV5;
@@ -411,14 +732,295 @@ CapturedImage WinClipboard::readClipboard()
             if (payload.isEmpty())
                 dibFormat = 0;
         }
-    }
-    // 到这里剪贴板已经关闭，解码、DIB 转换和 PNG 编码不再持有全局锁。
 
-    if (!encoding.isEmpty()) {
+        // QQ/微信复制消息时会写富文本格式，其中 EditElement 的 filepath 指向原始图片/表情文件。
+        const auto collectRichEdit = [&hasFormat, &richEditDocuments](UINT formatId) {
+            if (!hasFormat(formatId))
+                return;
+            const QByteArray document = clipboardBytes(formatId);
+            if (!document.isEmpty())
+                richEditDocuments.append(document);
+        };
+        collectRichEdit(m_qqRichFormat);
+        collectRichEdit(m_qqRichLegacyFormat);
+        // 兼容格式名不同但内容同为 RichEdit XML 的版本；只按名称匹配，不解析任意格式。
+        for (UINT available : formats) {
+            if (available < 0xC000 || available == m_qqRichFormat
+                || available == m_qqRichLegacyFormat || available == m_htmlFormat
+                || available == m_ownerMarker)
+                continue;
+            wchar_t name[128] = {};
+            const int length = GetClipboardFormatNameW(available, name, 128);
+            if (length <= 0)
+                continue;
+            if (!QString::fromWCharArray(name, length).contains(QStringLiteral("RichEdit"),
+                                                               Qt::CaseInsensitive))
+                continue;
+            const QByteArray document = clipboardBytes(available);
+            if (!document.isEmpty())
+                richEditDocuments.append(document);
+        }
+
+        if (hasFormat(m_htmlFormat))
+            htmlPayload = clipboardBytes(m_htmlFormat);
+
+        // Markdown 兜底：完全没有图片载荷和引用时才读文本，避免普通文本复制做无谓解析。
+        if (encoding.isEmpty() && !dibFormat && dropPaths.isEmpty()
+            && richEditDocuments.isEmpty() && htmlPayload.isEmpty())
+            plainText = clipboardPlainText();
+    }
+    // 到这里剪贴板已经关闭，文件读取、解码、DIB 转换和 PNG 编码不再持有全局锁。
+
+    // 解析所有引用来源：FileDrop、QQ/微信富文本 filepath、HTML 的 <img src>、Markdown 图片语法。
+    // 同时保留来源类别，调试日志据此区分“用户多选文件”和“同一张图被多个格式重复引用”。
+    struct LocalReference
+    {
+        QString path;
+        QString source;
+        int priority = 2; ///< 越小越可信：来源程序声明的引用优先于系统文件列表/临时副本
+    };
+    HtmlClipboard html;
+    if (!htmlPayload.isEmpty())
+        html = parseHtmlClipboard(htmlPayload);
+    QVector<LocalReference> localReferences;
+    const auto addLocalReference = [&localReferences](const QString &path, const QString &source,
+                                                      int priority) {
+        localReferences.append(LocalReference{path, source, priority});
+    };
+    for (const QString &path : std::as_const(dropPaths))
+        addLocalReference(path, QStringLiteral("文件列表"), 2);
+    for (const QByteArray &document : std::as_const(richEditDocuments)) {
+        for (const QString &path : richEditFilePaths(document))
+            addLocalReference(path, QStringLiteral("QQ/微信富文本"), 0);
+    }
+    QVector<QByteArray> inlineGifPayloads;
+    for (const QString &source : std::as_const(html.imageSources)) {
+        QByteArray inlineGif = decodeGifDataUri(source);
+        if (!inlineGif.isEmpty()) {
+            inlineGifPayloads.append(std::move(inlineGif));
+            continue;
+        }
+        // 捕获流程不访问网络：HTML 里只使用 file:// 等本地路径，http(s) URL 一律忽略，
+        // 因为仅凭 URL 后缀无法确认内容真的是图片，主动下载会引入额外攻击面。
+        if (!localPathFromReference(source).isEmpty())
+            addLocalReference(source, QStringLiteral("HTML"), 1);
+    }
+    if (!plainText.isEmpty()) {
+        const QString markdownTarget = markdownImageTarget(plainText);
+        if (!markdownTarget.isEmpty()) {
+            QByteArray inlineGif = decodeGifDataUri(markdownTarget);
+            if (!inlineGif.isEmpty())
+                inlineGifPayloads.append(std::move(inlineGif));
+            else if (!localPathFromReference(markdownTarget).isEmpty())
+                addLocalReference(markdownTarget, QStringLiteral("Markdown"), 1);
+        }
+    }
+
+    // 调试模式（或 MEMESERVANT2_CLIPBOARD_DEBUG=1）下输出引用来源和每个候选文件的详情，
+    // 便于定位“复制了动图却只捕获到静态帧”这类问题；正常运行时保持安静。
+    if (verbose) {
+        for (int index = 0; index < richEditDocuments.size(); ++index) {
+            LogService::instance().info(
+                QStringLiteral("调试：富文本格式 %1 结构：%2")
+                    .arg(index + 1)
+                    .arg(describeRichEditStructure(richEditDocuments.at(index))));
+        }
+        QHash<QString, int> sourceCounts;
+        for (const LocalReference &reference : std::as_const(localReferences))
+            ++sourceCounts[reference.source];
+        LogService::instance().info(
+            QStringLiteral("剪贴板引用统计：本地路径 %1 个（文件列表 %2、富文本 %3、HTML %4、Markdown %5），"
+                           "HTML 图片 %6 个，富文本格式 %7 份，内嵌 GIF %8 个")
+                .arg(localReferences.size())
+                .arg(sourceCounts.value(QStringLiteral("文件列表")))
+                .arg(sourceCounts.value(QStringLiteral("QQ/微信富文本")))
+                .arg(sourceCounts.value(QStringLiteral("HTML")))
+                .arg(sourceCounts.value(QStringLiteral("Markdown")))
+                .arg(html.imageSources.size())
+                .arg(richEditDocuments.size())
+                .arg(inlineGifPayloads.size()));
+        for (const LocalReference &reference : std::as_const(localReferences)) {
+            LogService::instance().info(QStringLiteral("调试：剪贴板引用（%1）：%2")
+                                            .arg(reference.source,
+                                                 QDir::toNativeSeparators(reference.path)));
+        }
+    }
+
+    // 1) 本地文件引用：QQ/微信、资源管理器、Markdown 绝对路径里最保真的来源。
+    struct LocalCandidate
+    {
+        QByteArray bytes;
+        QString format;
+        QString path;
+        QString source;
+        int priority = 2;
+    };
+    QVector<LocalCandidate> localCandidates;
+    QStringList seenPaths;
+    QVector<QByteArray> seenContents;
+    for (const LocalReference &reference : std::as_const(localReferences)) {
+        const QString path = localPathFromReference(reference.path);
+        if (path.isEmpty())
+            continue;
+        const QString dedupeKey = QDir::cleanPath(path).toLower();
+        if (seenPaths.contains(dedupeKey))
+            continue;
+        seenPaths.append(dedupeKey);
+        const QByteArray bytes = readReferencedImageFile(path);
+        if (bytes.isEmpty()) {
+            if (verbose) {
+                LogService::instance().info(QStringLiteral("调试：剪贴板引用文件不可读或不是图片（%1）：%2")
+                                                .arg(reference.source,
+                                                     QDir::toNativeSeparators(path)));
+            }
+            continue;
+        }
+        const QString format = ImageBytes::formatOf(bytes);
+        int width = 0;
+        int height = 0;
+        if (format.isEmpty() || !ImageBytes::sizeOf(bytes, &width, &height)) {
+            if (verbose) {
+                LogService::instance().info(QStringLiteral("调试：剪贴板引用文件无法识别图片信息（%1）：%2")
+                                                .arg(reference.source,
+                                                     QDir::toNativeSeparators(path)));
+            }
+            continue;
+        }
+        // 同一个逻辑图片可能被多个来源以不同路径重复发布（QQ/微信常见）；内容相同只保留一次，
+        // 否则多候选保护规则会把同一张动图误判成多张不同图片而放弃捕获。
+        const QByteArray fingerprint = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+        if (seenContents.contains(fingerprint)) {
+            if (verbose) {
+                LogService::instance().info(QStringLiteral("调试：剪贴板引用内容重复，已合并（%1）：%2")
+                                                .arg(reference.source,
+                                                     QDir::toNativeSeparators(path)));
+            }
+            continue;
+        }
+        seenContents.append(fingerprint);
+        LocalCandidate candidate;
+        candidate.bytes = bytes;
+        candidate.format = format;
+        candidate.path = path;
+        candidate.source = reference.source;
+        candidate.priority = reference.priority;
+        localCandidates.append(candidate);
+        if (verbose) {
+            LogService::instance().info(
+                QStringLiteral("调试：剪贴板图片候选 %1（%2）：格式=%3，尺寸=%4x%5，多帧=%6，字节=%7，路径=%8")
+                    .arg(localCandidates.size())
+                    .arg(reference.source)
+                    .arg(format)
+                    .arg(width)
+                    .arg(height)
+                    .arg(ImageBytes::looksAnimated(bytes) ? QStringLiteral("是") : QStringLiteral("否"))
+                    .arg(bytes.size())
+                    .arg(QDir::toNativeSeparators(path)));
+        }
+    }
+    if (verbose && localCandidates.isEmpty() && !localReferences.isEmpty())
+        LogService::instance().info(QStringLiteral("调试：剪贴板引用的本地文件都不可读或不是图片"));
+    const LocalCandidate *chosenLocal = nullptr;
+    if (localCandidates.size() == 1) {
+        chosenLocal = &localCandidates.first();
+    } else if (localCandidates.size() > 1) {
+        // 多个文件同时被引用时只接受唯一一个多帧动图，避免多选文件后抓到错误图片。
+        int animatedCount = 0;
+        const LocalCandidate *animatedCandidate = nullptr;
+        for (const LocalCandidate &candidate : std::as_const(localCandidates)) {
+            if (!ImageBytes::looksAnimated(candidate.bytes))
+                continue;
+            ++animatedCount;
+            animatedCandidate = &candidate;
+        }
+        if (animatedCount == 1) {
+            chosenLocal = animatedCandidate;
+        } else {
+            // 单帧 GIF 也在候选里唯一时接受：FileDrop 可能给的是转码静态图，富文本 filepath 才是 GIF。
+            int gifCount = 0;
+            const LocalCandidate *gifCandidate = nullptr;
+            for (const LocalCandidate &candidate : std::as_const(localCandidates)) {
+                if (candidate.format != QStringLiteral("gif"))
+                    continue;
+                ++gifCount;
+                gifCandidate = &candidate;
+            }
+            if (gifCount == 1) {
+                chosenLocal = gifCandidate;
+            } else {
+                // 仍无法唯一确定时，优先采用来源程序自己声明的引用（富文本 > HTML/Markdown > 文件列表）：
+                // QQ/微信会把原图写进富文本 filepath，同时用 HTML/文件列表再放一份临时转码副本。
+                // 只采用“最高优先级来源恰好一个候选”的情况；同一来源多个文件仍按多图处理，避免多选后猜错。
+                int bestPriority = 3;
+                for (const LocalCandidate &candidate : std::as_const(localCandidates)) {
+                    if (candidate.priority < bestPriority)
+                        bestPriority = candidate.priority;
+                }
+                int bestCount = 0;
+                const LocalCandidate *bestCandidate = nullptr;
+                for (const LocalCandidate &candidate : std::as_const(localCandidates)) {
+                    if (candidate.priority != bestPriority)
+                        continue;
+                    ++bestCount;
+                    bestCandidate = &candidate;
+                }
+                if (bestCount == 1) {
+                    chosenLocal = bestCandidate;
+                    if (verbose) {
+                        LogService::instance().info(
+                            QStringLiteral("调试：多候选无法按动图唯一化，按来源优先级选择（%1）：%2")
+                                .arg(bestCandidate->source,
+                                     QDir::toNativeSeparators(bestCandidate->path)));
+                    }
+                } else {
+                    LogService::instance().info(
+                        QStringLiteral("剪贴板引用了多张图片，未自动捕获（候选 %1 个）")
+                            .arg(localCandidates.size()));
+                }
+            }
+        }
+    }
+    if (chosenLocal) {
+        result.encoded = chosenLocal->bytes;
+        result.format = chosenLocal->format;
+        result.isValid = ImageBytes::sizeOf(result.encoded, &result.width, &result.height);
+        if (verbose) {
+            LogService::instance().info(QStringLiteral("调试：已选择剪贴板引用文件（%1）：%2")
+                                            .arg(chosenLocal->source,
+                                                 QDir::toNativeSeparators(chosenLocal->path)));
+        }
+        LogService::instance().info(QStringLiteral("已从剪贴板引用的本地文件捕获图片（%1）")
+                                        .arg(result.format));
+    }
+
+    // 2) 注册编码格式（GIF 族优先于静态 PNG/JPEG）。
+    if (!result.isValid && !encoding.isEmpty()) {
         result.encoded = std::move(payload);
         result.format = encoding;
-        result.isValid = decodeSize(result.encoded, &result.width, &result.height);
-    } else if (dibFormat) {
+        result.isValid = ImageBytes::sizeOf(result.encoded, &result.width, &result.height);
+        if (verbose && result.isValid)
+            LogService::instance().info(QStringLiteral("调试：回退到剪贴板注册编码格式 %1").arg(encoding));
+    }
+
+    // 3) HTML/Markdown 里内嵌的 data URI GIF，不需要联网。
+    if (!result.isValid) {
+        for (const QByteArray &inlineGif : std::as_const(inlineGifPayloads)) {
+            int width = 0;
+            int height = 0;
+            if (!ImageBytes::sizeOf(inlineGif, &width, &height))
+                continue;
+            result.encoded = inlineGif;
+            result.format = QStringLiteral("gif");
+            result.width = width;
+            result.height = height;
+            result.isValid = true;
+            LogService::instance().info(QStringLiteral("已从剪贴板引用的内嵌数据捕获 GIF"));
+            break;
+        }
+    }
+
+    // 4) DIB 静态兜底（截图、普通图片复制）。
+    if (!result.isValid && dibFormat) {
         const QImage image = imageFromDib(payload);
         if (!image.isNull()) {
             result.width = image.width();
@@ -430,8 +1032,14 @@ CapturedImage WinClipboard::readClipboard()
                 result.isValid = image.save(&pngBuffer, "PNG");
                 result.format = QStringLiteral("png");
             }
+            if (verbose && result.isValid) {
+                LogService::instance().info(QStringLiteral("调试：回退到剪贴板 DIB 静态位图（%1x%2）")
+                                                .arg(result.width)
+                                                .arg(result.height));
+            }
         }
     }
+
     if (result.width > kMaxClipboardImageSide || result.height > kMaxClipboardImageSide) {
         LogService::instance().warning(QStringLiteral("剪贴板图片尺寸异常，已忽略"));
         result.isValid = false;
@@ -439,7 +1047,27 @@ CapturedImage WinClipboard::readClipboard()
     return result;
 }
 
-// 丢弃本程序回写、无效或非单图事件，只向上层发出有效图片。
+// 调试快捷键专用：读取一次当前剪贴板格式和捕获结果，不改状态、不发捕获信号。
+// 格式清单用于确认来源程序写了哪些格式，捕获结果用于判断“为什么没有弹出捕获浮窗”。
+WinClipboard::ClipboardSnapshot WinClipboard::debugSnapshot()
+{
+    ClipboardSnapshot snapshot;
+    if (!OpenClipboard(nullptr))
+        return snapshot;
+    {
+        auto closeGuard = qScopeGuard([] { CloseClipboard(); });
+        snapshot.opened = true;
+        QVector<UINT> formats;
+        snapshot.formats = clipboardFormatNames(&formats, true);
+        snapshot.selfWritten = m_ownerMarker != 0 && formats.contains(m_ownerMarker);
+    }
+    // 关闭剪贴板后再按正常捕获路径读取：文件读取、解码和 DIB 转换都不持有全局锁。
+    snapshot.image = readClipboard();
+    snapshot.selfWritten = snapshot.selfWritten || snapshot.image.selfWritten;
+    return snapshot;
+}
+
+// 丢弃本程序回写和无效事件，只向上层发出有效图片。
 void WinClipboard::dispatchCaptured(const CapturedImage &image)
 {
     if (image.selfWritten) {

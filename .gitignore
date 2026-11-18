@@ -4,5 +4,8 @@ scripts/toolchain.bat
 memes/
 config.json
 logs/
+# 调试模式默认在程序根目录生成的日志文件
+debug.log
 .user/
 *.zip
+.vscode

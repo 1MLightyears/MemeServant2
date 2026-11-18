@@ -1,5 +1,6 @@
 // Endpoint必须是完整chat/completions URL；密钥只进入Authorization头，绝不写日志。
 #include "ai/openaicompatibleprovider.h"
+#include "ai/gifcompat.h"
 
 #include "core/appstrings.h"
 #include "storage/logservice.h"
@@ -7,6 +8,7 @@
 #include <QBuffer>
 #include <QDateTime>
 #include <QFile>
+#include <QImage>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -102,10 +104,12 @@ QStringList randomNicknameExamples(QStringList candidates, int requestedCount)
     return candidates.mid(0, count);
 }
 
-// 从嵌入资源读取基础提示词，并将随机 nickname 示例填入唯一占位符。
-QString nicknamePrompt(const QStringList &examples)
+// 根据是否走 GIF 拼接路线选择提示词资源；两条路线的提示词都使用同一个 nickname 示例占位符。
+QString nicknamePrompt(const QStringList &examples, bool gifCompatMode)
 {
-    QFile file(QStringLiteral(":/prompts/vision_nickname.txt"));
+    const QString resourcePath = gifCompatMode ? QStringLiteral(":/prompts/vision_nickname_gif.md")
+                                               : QStringLiteral(":/prompts/vision_nickname.md");
+    QFile file(resourcePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
         return {};
     QString prompt = QString::fromUtf8(file.readAll());
@@ -124,11 +128,9 @@ QString nicknamePrompt(const QStringList &examples)
     return prompt.replace(QLatin1String(kNicknameExamplesMarker), section).trimmed();
 }
 
-// AI Vision 不稳定支持 GIF，因此只取第一帧并转换为 PNG。
-QByteArray visionBytes(const QByteArray &bytes, const QString &format)
+// 兜底路线：GIF 只取第一帧并转换为 PNG（兼容模式不可用或关闭时的行为）。
+QByteArray firstFramePng(const QByteArray &bytes)
 {
-    if (!format.contains(QLatin1String("gif"), Qt::CaseInsensitive))
-        return bytes;
     QBuffer buffer(const_cast<QByteArray *>(&bytes));
     buffer.open(QIODevice::ReadOnly);
     QImageReader reader(&buffer, "GIF");
@@ -140,6 +142,33 @@ QByteArray visionBytes(const QByteArray &bytes, const QString &format)
         frame.save(&pngBuffer, "PNG");
     }
     return png.isEmpty() ? bytes : png;
+}
+
+struct PreparedVisionImage
+{
+    QByteArray bytes;
+    bool gifComposite = false;
+    int compositeFrames = 0;
+};
+
+// AI Vision 不稳定支持 GIF：默认取第一帧；启用 GIF 兼容模式时改走独立的多帧拼接路线。
+PreparedVisionImage visionBytes(const QByteArray &bytes, const QString &format, bool gifCompatMode)
+{
+    PreparedVisionImage result;
+    result.bytes = bytes;
+    if (!format.contains(QLatin1String("gif"), Qt::CaseInsensitive))
+        return result;
+    if (gifCompatMode) {
+        const GifCompat::Composite composite = GifCompat::compose(bytes);
+        if (!composite.png.isEmpty()) {
+            result.bytes = composite.png;
+            result.gifComposite = true;
+            result.compositeFrames = composite.frameCount;
+            return result;
+        }
+    }
+    result.bytes = firstFramePng(bytes);
+    return result;
 }
 }
 
@@ -175,16 +204,25 @@ void OpenAiCompatibleProvider::requestNickname(const QByteArray &rawBytes, const
         emit failed(AppStrings::apiKeyMissingMessage());
         return;
     }
-    const QByteArray bytes = visionBytes(rawBytes, format);
+    const PreparedVisionImage prepared = visionBytes(rawBytes, format, settings.gifCompatMode);
+    const QByteArray &bytes = prepared.bytes;
     if (bytes.isEmpty() || bytes.size() > kMaxImageBytes) {
         LogService::instance().warning(QStringLiteral("AI[%1] 图片校验失败 bytes=%2 format=%3")
                                        .arg(requestTag).arg(bytes.size()).arg(format));
         emit failed(AppStrings::aiImageInvalidMessage());
         return;
     }
+    if (prepared.gifComposite) {
+        LogService::instance().info(
+            QStringLiteral("AI[%1] GIF兼容模式：%2帧，长图bytes=%3")
+                .arg(requestTag)
+                .arg(prepared.compositeFrames)
+                .arg(bytes.size()));
+    }
     const QStringList nicknameExamples = randomNicknameExamples(
         settings.nicknameCandidates, settings.nicknameExampleCount);
-    const QString prompt = nicknamePrompt(nicknameExamples);
+    // 只有真正拼接成功时才使用 GIF 专用提示词；回退首帧时仍使用普通提示词。
+    const QString prompt = nicknamePrompt(nicknameExamples, prepared.gifComposite);
     if (prompt.isEmpty()) {
         LogService::instance().error(QStringLiteral("AI[%1] 提示词资源读取或渲染失败").arg(requestTag));
         emit failed(AppStrings::aiPromptUnavailableMessage());
@@ -214,12 +252,14 @@ void OpenAiCompatibleProvider::requestNickname(const QByteArray &rawBytes, const
     const QString normalizedKey = settings.apiKey.trimmed();
     LogService::instance().info(QStringLiteral(
         "AI[%1] 请求开始 endpoint=%2://%3%4 model=%5 format=%6 rawBytes=%7 requestBytes=%8 "
-        "maxTokens=%9 nicknameCandidates=%10 nicknameExamples=%11 keySource=%12 keyTrimmed=%13")
+        "maxTokens=%9 nicknameCandidates=%10 nicknameExamples=%11 keySource=%12 keyTrimmed=%13 "
+        "gifComposite=%14")
         .arg(requestTag, endpoint.scheme(), endpoint.host(), endpoint.path(), settings.model.trimmed(),
              format, QString::number(rawBytes.size()), QString::number(bytes.size()),
              QString::number(kMaxCompletionTokens), QString::number(settings.nicknameCandidates.size()),
              QString::number(nicknameExamples.size()), settings.apiKeySource,
-             settings.apiKey == normalizedKey ? QStringLiteral("false") : QStringLiteral("true")));
+             settings.apiKey == normalizedKey ? QStringLiteral("false") : QStringLiteral("true"),
+             prepared.gifComposite ? QStringLiteral("true") : QStringLiteral("false")));
     QNetworkRequest request(endpoint);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Authorization", "Bearer " + normalizedKey.toUtf8());

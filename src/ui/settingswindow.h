@@ -58,6 +58,8 @@ private:
     AppController *m_controller = nullptr;
     QCheckBox *m_startup = nullptr;
     QDoubleSpinBox *m_previewDelay = nullptr;
+    QCheckBox *m_debugMode = nullptr;
+    QLineEdit *m_debugLogFileName = nullptr;
     QCheckBox *m_captureEnabled = nullptr;
     QSpinBox *m_maxWidth = nullptr;
     QSpinBox *m_maxHeight = nullptr;
@@ -77,6 +79,7 @@ private:
     QLineEdit *m_apiKey = nullptr;
     QLineEdit *m_apiEnvName = nullptr;
     QCheckBox *m_autoAi = nullptr;
+    QCheckBox *m_gifCompatMode = nullptr;
     QSpinBox *m_aiNicknameExampleCount = nullptr;
     QLineEdit *m_galleryPath = nullptr;
     QPushButton *m_galleryBrowse = nullptr;

@@ -19,6 +19,8 @@ struct AiSettings
     QStringList nicknameCandidates;
     int nicknameExampleCount = 0;
     int timeoutSeconds = 30;
+    /// GIF兼容模式：把多帧 GIF 拼接成一张长图再发给只支持静态图的模型。
+    bool gifCompatMode = false;
 };
 
 class OpenAiCompatibleProvider : public QObject

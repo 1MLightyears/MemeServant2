@@ -70,6 +70,21 @@ QString AppStrings::thumbnailPreviewDelayHint()
 {
     return QStringLiteral("鼠标在候选缩略图上停留该时长后放大显示原图；设为0秒可关闭预览。");
 }
+QString AppStrings::debugGroupTitle() { return QStringLiteral("调试"); }
+QString AppStrings::debugModeText() { return QStringLiteral("调试模式"); }
+QString AppStrings::debugModeHint()
+{
+    return QStringLiteral("开启后，程序日志会追加写入程序根目录下的调试日志文件，并注册 Alt+D 快捷键："
+                          "每按一次读取当前剪贴板，把格式清单和“为什么没有弹出捕获浮窗”的判定写入日志，"
+                          "用于排查漏捕获。关闭调试模式会立即注销该快捷键，Alt+D 恢复由系统和其他程序正常处理。");
+}
+QString AppStrings::debugLogFileNameLabel() { return QStringLiteral("调试日志文件名"); }
+QString AppStrings::debugLogFileNamePlaceholder() { return QStringLiteral("debug.log"); }
+QString AppStrings::debugLogFileNameHint()
+{
+    return QStringLiteral("只写文件名，日志追加写入程序根目录；同名文件不会被覆盖，旧内容保留。"
+                          "留空使用 debug.log；后缀固定为 .log，未写时会自动补全。");
+}
 QString AppStrings::listenClipboardText() { return QStringLiteral("监听剪贴板新图片"); }
 QString AppStrings::captureSizeGroupTitle() { return QStringLiteral("不捕获超过此尺寸的图片"); }
 QString AppStrings::maxWidthLabel() { return QStringLiteral("长"); }
@@ -98,6 +113,14 @@ QString AppStrings::modelLabel() { return QStringLiteral("Model"); }
 QString AppStrings::apiKeyLabel() { return QStringLiteral("API_KEY"); }
 QString AppStrings::apiKeyEnvLabel() { return QStringLiteral("API_ENV_KEY"); }
 QString AppStrings::autoAiText() { return QStringLiteral("总是将捕获图片发送给AI识图"); }
+QString AppStrings::gifCompatModeText() { return QStringLiteral("GIF兼容模式：多帧拼接为长图后发送"); }
+QString AppStrings::gifCompatModeHint()
+{
+    return QStringLiteral("捕获到 GIF 时，按帧序号均匀抽取若干帧纵向拼成一张长图再发给识图模型"
+                          "（帧数由 8MB 请求上限和每帧大小决定，包含头尾），"
+                          "让 nickname 建议能参考动作变化；会增加请求图片尺寸和识别耗时。"
+                          "关闭时只发送第一帧。");
+}
 QString AppStrings::aiNicknameExampleCountLabel() { return QStringLiteral("Nickname风格示例数"); }
 QString AppStrings::aiNicknameExampleCountHint()
 {

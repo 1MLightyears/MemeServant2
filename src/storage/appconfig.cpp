@@ -3,8 +3,10 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 #include "core/appstrings.h"
@@ -24,6 +26,25 @@ QString AppConfig::resolvedGalleryPath(const QString &applicationDirectory) cons
     if (galleryPath.trimmed().isEmpty())
         return applicationDirectory + QStringLiteral("/memes");
     return QDir::fromNativeSeparators(galleryPath);
+}
+
+// 调试日志固定写在程序根目录：只接受纯文件名，避免配置把日志追加到任意路径或已有文件。
+QString AppConfig::resolvedDebugLogFileName() const
+{
+    QString name = QFileInfo(debugLogFileName.trimmed()).fileName();
+    // Windows 文件名不允许 < > : " / \ | ? * 和控制字符；先剥掉再判断是否为空。
+    static const QRegularExpression invalidCharacters(
+        QStringLiteral(R"([<>:"/\\|?*\x00-\x1f])"));
+    name.remove(invalidCharacters);
+    // Windows 会忽略结尾的空格和点，去掉后才是落盘时的真实文件名。
+    while (name.endsWith(QLatin1Char(' ')) || name.endsWith(QLatin1Char('.')))
+        name.chop(1);
+    if (name.isEmpty())
+        return QStringLiteral("debug.log");
+    // 固定 .log 后缀：防止用户误把 config.json、数据库或 exe 等已有文件当作日志追加写入。
+    if (!name.endsWith(QStringLiteral(".log"), Qt::CaseInsensitive))
+        name += QStringLiteral(".log");
+    return name;
 }
 
 // 保存程序目录，后续按可写性选择配置文件位置。
@@ -98,6 +119,7 @@ AppConfig ConfigStore::load()
     config.apiKeyEnvName = object.value(QStringLiteral("apiKeyEnvName")).toString();
     config.hasStoredApiKey = object.value(QStringLiteral("hasStoredApiKey")).toBool(false);
     config.autoAi = object.value(QStringLiteral("autoAi")).toBool(false);
+    config.gifAiCompatMode = object.value(QStringLiteral("gifAiCompatMode")).toBool(false);
     config.aiNicknameExampleCount = qBound(
         0, object.value(QStringLiteral("aiNicknameExampleCount")).toInt(8), 50);
     config.thumbnailCacheSize = object.value(QStringLiteral("thumbnailCacheSize")).toInt(256);
@@ -106,6 +128,9 @@ AppConfig ConfigStore::load()
     config.unmatchedCardOpacity = (unmatchedOpacity < 0 || unmatchedOpacity > 100) ? 75 : unmatchedOpacity;
     int separatorSpacing = object.value(QStringLiteral("separatorSpacing")).toInt(14);
     config.separatorSpacing = (separatorSpacing < 0 || separatorSpacing > 100) ? 14 : separatorSpacing;
+    config.debugMode = object.value(QStringLiteral("debugMode")).toBool(false);
+    config.debugLogFileName = object.value(QStringLiteral("debugLogFileName"))
+                                  .toString(QStringLiteral("debug.log"));
     m_activePath = file.fileName();
     return config;
 }
@@ -135,10 +160,13 @@ bool ConfigStore::save(AppConfig &config, QString *error)
     object.insert(QStringLiteral("apiKeyEnvName"), config.apiKeyEnvName);
     object.insert(QStringLiteral("hasStoredApiKey"), config.hasStoredApiKey);
     object.insert(QStringLiteral("autoAi"), config.autoAi);
+    object.insert(QStringLiteral("gifAiCompatMode"), config.gifAiCompatMode);
     object.insert(QStringLiteral("aiNicknameExampleCount"), config.aiNicknameExampleCount);
     object.insert(QStringLiteral("thumbnailCacheSize"), config.thumbnailCacheSize);
     object.insert(QStringLiteral("unmatchedCardOpacity"), config.unmatchedCardOpacity);
     object.insert(QStringLiteral("separatorSpacing"), config.separatorSpacing);
+    object.insert(QStringLiteral("debugMode"), config.debugMode);
+    object.insert(QStringLiteral("debugLogFileName"), config.debugLogFileName);
 
     QFileInfo info(path);
     if (!info.dir().exists())

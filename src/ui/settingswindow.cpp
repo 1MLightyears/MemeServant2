@@ -15,6 +15,8 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTimer>
@@ -50,6 +52,8 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     connect(m_autoSaveTimer, &QTimer::timeout, this, &SettingsWindow::save);
     connect(m_startup, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
     connect(m_previewDelay, &QDoubleSpinBox::valueChanged, this, [this]() { scheduleSave(); });
+    connect(m_debugMode, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
+    connect(m_debugLogFileName, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_captureEnabled, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
     connect(m_maxWidth, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_maxHeight, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
@@ -67,6 +71,7 @@ SettingsWindow::SettingsWindow(AppController *controller, QWidget *parent)
     connect(m_model, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_apiEnvName, &QLineEdit::textEdited, this, [this]() { scheduleSave(); });
     connect(m_autoAi, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
+    connect(m_gifCompatMode, &QCheckBox::toggled, this, [this]() { scheduleSave(); });
     connect(m_aiNicknameExampleCount, &QSpinBox::valueChanged, this, [this]() { scheduleSave(); });
     connect(m_galleryPath, &QLineEdit::editingFinished, this, [this]() { scheduleSave(); });
     connect(m_cacheSize, &QComboBox::currentIndexChanged, this, [this]() { scheduleSave(); });
@@ -99,6 +104,21 @@ QWidget *SettingsWindow::buildGeneralPage()
     m_previewDelay->setSpecialValueText(QStringLiteral("关闭"));
     m_previewDelay->setToolTip(AppStrings::thumbnailPreviewDelayHint());
     form->addRow(AppStrings::thumbnailPreviewDelayLabel(), m_previewDelay);
+    // 调试模式：日志文件固定写入程序根目录，文件名可预设；Alt+D 只在该模式开启时注册。
+    auto *debugGroup = new QGroupBox(AppStrings::debugGroupTitle(), page);
+    auto *debugForm = new QFormLayout(debugGroup);
+    m_debugMode = new QCheckBox(AppStrings::debugModeText(), debugGroup);
+    m_debugMode->setToolTip(AppStrings::debugModeHint());
+    m_debugLogFileName = new QLineEdit(debugGroup);
+    m_debugLogFileName->setPlaceholderText(AppStrings::debugLogFileNamePlaceholder());
+    m_debugLogFileName->setToolTip(AppStrings::debugLogFileNameHint());
+    // 只允许输入 Windows 合法文件名字符，避免路径分隔符把日志写到任意目录。
+    m_debugLogFileName->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral(R"([^<>:"/\\|?*\x00-\x1f]{1,100})")),
+        m_debugLogFileName));
+    debugForm->addRow(m_debugMode);
+    debugForm->addRow(AppStrings::debugLogFileNameLabel(), m_debugLogFileName);
+    form->addRow(debugGroup);
     return page;
 }
 
@@ -179,6 +199,8 @@ QWidget *SettingsWindow::buildAiPage()
     m_apiKey->setPlaceholderText(AppStrings::keepApiKeyPlaceholder());
     m_apiEnvName = new QLineEdit(page); m_apiEnvName->setPlaceholderText(AppStrings::apiKeyEnvExample());
     m_autoAi = new QCheckBox(AppStrings::autoAiText(), page);
+    m_gifCompatMode = new QCheckBox(AppStrings::gifCompatModeText(), page);
+    m_gifCompatMode->setToolTip(AppStrings::gifCompatModeHint());
     m_aiNicknameExampleCount = new QSpinBox(page);
     m_aiNicknameExampleCount->setRange(0, 50);
     m_aiNicknameExampleCount->setSuffix(QStringLiteral(" 个"));
@@ -191,6 +213,7 @@ QWidget *SettingsWindow::buildAiPage()
     form->addRow(AppStrings::apiKeyEnvLabel(), m_apiEnvName);
     form->addRow(AppStrings::aiNicknameExampleCountLabel(), m_aiNicknameExampleCount);
     form->addRow(m_autoAi);
+    form->addRow(m_gifCompatMode);
     auto *keys = new QHBoxLayout;
     auto *saveKey = new QPushButton(AppStrings::saveApiKeyButton(), page);
     auto *clearKey = new QPushButton(AppStrings::clearApiKeyButton(), page);
@@ -256,6 +279,8 @@ void SettingsWindow::reloadFromController()
     const AppConfig config = m_controller->config();
     m_startup->setChecked(config.startup);
     m_previewDelay->setValue(config.thumbnailPreviewDelayMs / 1000.0);
+    m_debugMode->setChecked(config.debugMode);
+    m_debugLogFileName->setText(config.debugLogFileName);
     m_captureEnabled->setChecked(config.captureEnabled);
     m_maxWidth->setValue(config.maxWidth);
     m_maxHeight->setValue(config.maxHeight);
@@ -271,6 +296,7 @@ void SettingsWindow::reloadFromController()
     m_separatorSpacing->setValue(config.separatorSpacing);
     m_endpoint->setText(config.aiEndpoint); m_model->setText(config.aiModel);
     m_apiEnvName->setText(config.apiKeyEnvName); m_autoAi->setChecked(config.autoAi);
+    m_gifCompatMode->setChecked(config.gifAiCompatMode);
     m_aiNicknameExampleCount->setValue(config.aiNicknameExampleCount);
     m_galleryPath->setText(m_controller->galleryPath());
     index = m_cacheSize->findData(config.thumbnailCacheSize);
@@ -292,6 +318,8 @@ void SettingsWindow::collect(AppConfig &config)
     config = old;
     config.startup = m_startup->isChecked();
     config.thumbnailPreviewDelayMs = qRound(m_previewDelay->value() * 1000.0);
+    config.debugMode = m_debugMode->isChecked();
+    config.debugLogFileName = m_debugLogFileName->text().trimmed();
     config.captureEnabled = m_captureEnabled->isChecked();
     config.maxWidth = m_maxWidth->value(); config.maxHeight = m_maxHeight->value();
     if (!m_saveShortcut->keySequence().isEmpty()) config.saveShortcut = m_saveShortcut->keySequence().toString();
@@ -305,6 +333,7 @@ void SettingsWindow::collect(AppConfig &config)
     config.autoPaste = m_autoPaste->isChecked();
     config.aiEndpoint = m_endpoint->text(); config.aiModel = m_model->text();
     config.apiKeyEnvName = m_apiEnvName->text(); config.autoAi = m_autoAi->isChecked();
+    config.gifAiCompatMode = m_gifCompatMode->isChecked();
     config.aiNicknameExampleCount = m_aiNicknameExampleCount->value();
     config.galleryPath = m_galleryPath->text();
     config.thumbnailCacheSize = m_cacheSize->currentData().toInt();

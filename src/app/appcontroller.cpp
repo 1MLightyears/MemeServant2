@@ -34,6 +34,11 @@
 
 namespace {
 constexpr char kApiKeyTarget[] = "AiApiKey";
+// 同一进程可注册多个全局快捷键，每个消息窗口使用各自的 ID。
+constexpr int kQuickbarHotkeyId = 0x4D53;
+constexpr int kDebugHotkeyId = 0x4D54;
+// 调试模式专用：按一次读取一次当前剪贴板并写入调试日志。
+constexpr char kDebugClipboardHotkey[] = "Alt+D";
 const int THUMBNAIL_THREAD_TIMEOUT = 10000;
 }
 
@@ -69,6 +74,12 @@ bool AppController::nativeEventFilter(const QByteArray &, void *message, qintptr
         emit quickbarRequested();
         return true;
     }
+    // Alt+D 只在调试模式开启时注册：关闭调试后系统不会再向本进程投递该热键，
+    // 组合键会继续由前台程序正常处理，而不是被本程序消费后再丢弃。
+    if (m_debugHotkey && m_debugHotkey->processHotkey(windowsMessage)) {
+        logClipboardDiagnostics();
+        return true;
+    }
     return m_clipboard && m_clipboard->processMessage(windowsMessage) && false;
 }
 
@@ -78,6 +89,8 @@ bool AppController::initialize(QString *error)
     // 先加载日志和配置，之后所有失败路径都能留下诊断信息。
     LogService::instance().initialize(QCoreApplication::applicationDirPath() + QStringLiteral("/logs"));
     m_config = m_configStore.load();
+    // 调试模式在启动阶段就生效，让接下来的启动日志也进入同一个调试文件。
+    applyDebugSettings();
 
     // 单实例失败时通知已有进程并让当前进程退出，不继续打开数据库。
     m_singleInstance = new WinSingleInstance(this);
@@ -98,7 +111,7 @@ bool AppController::initialize(QString *error)
         return false;
     }
 
-    m_hotkey = new WinGlobalHotkey(this);
+    m_hotkey = new WinGlobalHotkey(kQuickbarHotkeyId, this);
     connect(m_hotkey, &WinGlobalHotkey::activated, this, &AppController::quickbarRequested);
     QString hotkeyError;
     if (!m_config.quickHotkey.isEmpty() && !m_hotkey->registerSequence(m_config.quickHotkey, &hotkeyError)) {
@@ -107,6 +120,9 @@ bool AppController::initialize(QString *error)
         m_configStore.save(m_config);
         m_startupHotkeyConflict = true;
     }
+    // 调试快捷键使用独立消息窗口和 ID，与快捷栏快捷键互不影响；关闭调试模式时保持未注册。
+    m_debugHotkey = new WinGlobalHotkey(kDebugHotkeyId, this);
+    applyDebugSettings();
 
     m_clipboard = new WinClipboard(this);
     connect(m_clipboard, &WinClipboard::imageCaptured, this, [this](const CapturedImage &image) {
@@ -140,6 +156,127 @@ bool AppController::initialize(QString *error)
     LogService::instance().info(QStringLiteral("事件过滤器安装完成"));
     LogService::instance().info(QStringLiteral("程序启动完成并进入常驻状态"));
     return true;
+}
+
+// 调试日志文件固定在程序根目录，文件名来自配置并做纯文件名清洗。
+QString AppController::debugLogFilePath() const
+{
+    return QCoreApplication::applicationDirPath() + QLatin1Char('/')
+           + m_config.resolvedDebugLogFileName();
+}
+
+// 幂等地同步调试模式：日志文件按配置接入/切换/关闭，Alt+D 只在实际开启调试模式时注册。
+// 关闭时先注销快捷键，系统随后会把 Alt+D 继续交给前台程序，而不是被本程序吞掉。
+void AppController::applyDebugSettings()
+{
+    LogService &log = LogService::instance();
+    if (!m_config.debugMode) {
+        if (m_debugHotkey && m_debugHotkey->isRegistered())
+            m_debugHotkey->unregister();
+        if (log.isDebugFileEnabled()) {
+            // 关闭前把最后一条说明写进调试文件，便于确认之后的日志不再属于调试模式。
+            log.info(QStringLiteral("调试模式已关闭，停止追加调试日志"));
+            log.disableDebugFile();
+        }
+        return;
+    }
+
+    const QString path = debugLogFilePath();
+    if (!log.isDebugFileEnabled()
+        || QDir::cleanPath(log.debugFilePath()) != QDir::cleanPath(path)) {
+        const bool switching = log.isDebugFileEnabled();
+        // 切换文件名前先在旧文件里留一条说明，避免旧日志看起来无故中断。
+        if (switching) {
+            log.info(QStringLiteral("调试日志文件即将切换至：")
+                     + QDir::toNativeSeparators(path));
+        }
+        QString enableError;
+        if (!log.enableDebugFile(path, &enableError)) {
+            if (switching)
+                log.warning(QStringLiteral("调试日志文件不可写，继续使用原日志文件：") + enableError);
+            else
+                log.warning(QStringLiteral("调试模式已开启，但调试日志文件不可写：") + enableError);
+        } else if (switching) {
+            log.info(QStringLiteral("调试日志已切换至：") + QDir::toNativeSeparators(path)
+                     + QStringLiteral("；后续运行日志追加写入该文件"));
+        } else {
+            log.info(QStringLiteral("调试模式已开启：运行日志追加写入 %1；按 Alt+D 输出一次当前剪贴板诊断快照")
+                         .arg(QDir::toNativeSeparators(path)));
+        }
+    }
+
+    // 注册失败不影响调试日志和程序启动，只记录原因；下次保存调试设置时会重试。
+    if (m_debugHotkey && !m_debugHotkey->isRegistered()) {
+        QString hotkeyError;
+        if (!m_debugHotkey->registerSequence(QLatin1String(kDebugClipboardHotkey), &hotkeyError))
+            log.warning(QStringLiteral("Alt+D 剪贴板诊断快捷键注册失败：") + hotkeyError);
+        else
+            log.info(QStringLiteral("Alt+D 剪贴板诊断快捷键已注册"));
+    }
+}
+
+// Alt+D 的调试入口：记录当前剪贴板格式、捕获读取结果，以及为什么没有激活捕获浮窗。
+// 只读取，不发出捕获信号，也不影响正常捕获流程。
+void AppController::logClipboardDiagnostics()
+{
+    // 热键只应在调试模式注册；消息可能在关闭调试的瞬间残留在队列里，这里再兜底一次。
+    if (!m_config.debugMode)
+        return;
+    LogService &log = LogService::instance();
+    log.info(QStringLiteral("调试快照：收到 Alt+D 请求，开始读取当前剪贴板"));
+    if (!m_clipboard) {
+        log.warning(QStringLiteral("调试快照：剪贴板服务尚未创建，无法读取"));
+        return;
+    }
+
+    const WinClipboard::ClipboardSnapshot snapshot = m_clipboard->debugSnapshot();
+    if (!snapshot.opened) {
+        log.warning(QStringLiteral("调试快照：无法打开系统剪贴板（可能被其他程序占用）"));
+        return;
+    }
+    log.info(QStringLiteral("调试快照：剪贴板格式 %1 个：%2")
+                 .arg(snapshot.formats.size())
+                 .arg(snapshot.formats.isEmpty() ? QStringLiteral("（无）")
+                                                 : snapshot.formats.join(QStringLiteral("、"))));
+
+    const CapturedImage &captured = snapshot.image;
+    if (captured.isValid) {
+        log.info(QStringLiteral("调试快照：捕获读取成功，格式=%1，尺寸=%2x%3，编码字节=%4")
+                     .arg(captured.format)
+                     .arg(captured.width)
+                     .arg(captured.height)
+                     .arg(captured.encoded.size()));
+    } else {
+        log.info(QStringLiteral("调试快照：按捕获路径未读到可保存的单个逻辑图片"));
+    }
+
+    // 判定顺序与 AppController::handleCapture 的过滤顺序保持一致，便于直接定位漏捕获原因。
+    QString verdict;
+    bool unexpected = false;
+    if (!m_config.captureEnabled) {
+        verdict = QStringLiteral("剪贴板监听已暂停（captureEnabled=false），任何图片都不会弹出捕获浮窗");
+    } else if (snapshot.selfWritten) {
+        verdict = QStringLiteral("剪贴板带本程序自写标记，会被 selfWritten 过滤，不弹浮窗属于预期行为");
+    } else if (!captured.isValid) {
+        verdict = QStringLiteral("当前剪贴板没有可捕获的图片（文本、文件列表、多图引用等不会激活捕获浮窗）");
+    } else if (captured.width > m_config.maxWidth || captured.height > m_config.maxHeight) {
+        verdict = QStringLiteral("图片尺寸超过捕获阈值 %1x%2，会被尺寸上限过滤")
+                      .arg(m_config.maxWidth)
+                      .arg(m_config.maxHeight);
+    } else if (m_captureToast) {
+        verdict = QStringLiteral("捕获浮窗当前已存在，本次内容满足捕获条件");
+    } else {
+        verdict = QStringLiteral("内容满足捕获条件但当前没有捕获浮窗；若刚复制图片却没有出现浮窗，"
+                                 "请检查剪贴板监听或捕获事件是否丢失");
+        unexpected = true;
+    }
+    if (unexpected)
+        log.warning(QStringLiteral("调试快照：判定=") + verdict);
+    else
+        log.info(QStringLiteral("调试快照：判定=") + verdict);
+    log.info(QStringLiteral("调试快照：监听启用=%1，捕获浮窗=%2")
+                 .arg(m_config.captureEnabled ? QStringLiteral("是") : QStringLiteral("否"),
+                      m_captureToast ? QStringLiteral("已打开") : QStringLiteral("未打开")));
 }
 
 // 只查询一次数据库快照，并同时交给快捷栏和缩略图任务。
@@ -202,6 +339,7 @@ AiSettings AppController::aiSettings()
     settings.endpoint = m_config.aiEndpoint;
     settings.model = m_config.aiModel;
     settings.nicknameExampleCount = m_config.aiNicknameExampleCount;
+    settings.gifCompatMode = m_config.gifAiCompatMode;
     settings.timeoutSeconds = 30;
     QSet<QString> seenNicknames;
     const auto groupedNicknames = m_database.nicknames();
@@ -268,6 +406,10 @@ bool AppController::saveConfiguration(AppConfig config, QString *error)
     if (!m_configStore.save(config, error))
         return false;
     m_config = config;
+    // 调试开关或调试日志文件名变化时，立即同步日志文件和 Alt+D 热键的注册状态。
+    if (config.debugMode != oldConfig.debugMode
+        || config.resolvedDebugLogFileName() != oldConfig.resolvedDebugLogFileName())
+        applyDebugSettings();
     // 持久化成功后再刷新快捷栏、开机启动和内存索引。
     if (m_quickBar)
         m_quickBar->applyConfig(m_config);

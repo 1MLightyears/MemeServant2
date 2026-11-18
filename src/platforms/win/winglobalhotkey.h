@@ -11,7 +11,8 @@ class WinGlobalHotkey : public QObject
 {
     Q_OBJECT
 public:
-    explicit WinGlobalHotkey(QObject *parent = nullptr);
+    /// hotkeyId 用于区分同一进程内的多个全局快捷键实例，不同实例不能共用同一个 ID。
+    explicit WinGlobalHotkey(int hotkeyId, QObject *parent = nullptr);
     ~WinGlobalHotkey() override;
     /// 解析并注册一个带修饰键的单键快捷键，失败时保持未注册状态。
     bool registerSequence(const QString &sequence, QString *error);
@@ -19,12 +20,15 @@ public:
     void unregister();
     /// 判断消息是否是本对象注册的 WM_HOTKEY。
     bool processHotkey(MSG *message);
+    /// 当前是否已有成功注册的快捷键。
+    bool isRegistered() const { return m_registered; }
 
 signals:
     void activated();
 
 private:
     HWND m_window = nullptr;
+    int m_hotkeyId = 0;
     bool m_registered = false;
 };
 

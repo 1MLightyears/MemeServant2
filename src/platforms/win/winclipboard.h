@@ -5,6 +5,7 @@
 // 封装 Windows 剪贴板监听、图片识别、原始格式保留和自写入标记。
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <windows.h>
 #include "clipboard/clipboardtypes.h"
@@ -23,6 +24,16 @@ public:
     bool writeImage(const CapturedImage &image, QString *error);
     /// 处理一个 Windows 原生消息，并返回是否由本类消费。
     bool processMessage(MSG *message);
+
+    /// 当前剪贴板的只读诊断快照；只读取，不发出捕获信号，供调试快捷键记录排查信息。
+    struct ClipboardSnapshot
+    {
+        bool opened = false;      ///< 是否成功打开系统剪贴板
+        QStringList formats;      ///< 剪贴板格式名；匿名格式用数字 ID
+        bool selfWritten = false; ///< 是否带本程序自写标记
+        CapturedImage image;      ///< 按正常捕获路径读到的图片结果
+    };
+    ClipboardSnapshot debugSnapshot();
 
 private:
     /// 一种图片编码格式及其多个注册格式名；不同应用会用不同名字发布同一种编码数据。
@@ -46,6 +57,12 @@ private:
     HWND m_window = nullptr;
     ATOM m_windowClass = 0;
     UINT m_ownerMarker = 0;
+    /// CF_HTML：浏览器复制图片时会在其中写入原图 URL，QQ/微信富文本也会写本地路径。
+    UINT m_htmlFormat = 0;
+    /// QQ/微信复制消息时写入的富文本 XML，EditElement 的 filepath 指向原图/表情文件。
+    UINT m_qqRichFormat = 0;
+    /// 旧版 QQ 使用的兼容格式名，内容与 m_qqRichFormat 相同。
+    UINT m_qqRichLegacyFormat = 0;
     /// 按读取优先级排列的编码格式族：GIF 优先保留动图，其次 PNG、JPEG。
     QVector<EncodedFormatFamily> m_encodedFormats;
 

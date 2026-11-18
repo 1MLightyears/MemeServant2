@@ -68,6 +68,12 @@ private:
     void reloadRecords(bool scheduleThumbnails = true);
     /// 过滤无效或超尺寸图片后发出捕获信号。
     void handleCapture(const CapturedImage &image);
+    /// 幂等地同步调试日志文件和 Alt+D 剪贴板诊断快捷键状态。
+    void applyDebugSettings();
+    /// 把当前剪贴板内容与“是否会激活捕获浮窗”的判定写入调试日志。
+    void logClipboardDiagnostics();
+    /// 返回调试日志文件的绝对路径（程序根目录 + 配置中的文件名）。
+    QString debugLogFilePath() const;
     /// 在后台线程扫描并生成缺失的缩略图缓存。
     void startThumbnailScan(const QVector<MemeRecord> &records);
     /// 合并环境变量和 Windows 凭据中的 AI 密钥配置。
@@ -78,6 +84,7 @@ private:
     DatabaseService m_database;
     WinClipboard *m_clipboard = nullptr;
     WinGlobalHotkey *m_hotkey = nullptr;
+    WinGlobalHotkey *m_debugHotkey = nullptr;
     WinSingleInstance *m_singleInstance = nullptr;
     CaptureToast *m_captureToast = nullptr;
     QuickBar *m_quickBar = nullptr;
