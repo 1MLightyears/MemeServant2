@@ -532,7 +532,7 @@ bool AppController::deleteMeme(const QString &memeId, QString *error)
     for (const auto &move : std::as_const(movedFiles))
         QFile::remove(move.second);
     reloadRecords(false);
-    LogService::instance().info(QStringLiteral("表情包及其关联nickname已删除"));
+    LogService::instance().info(QStringLiteral("表情包及其关联标签已删除"));
     return true;
 }
 

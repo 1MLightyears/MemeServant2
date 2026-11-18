@@ -22,7 +22,7 @@ QString AppStrings::captureTitle() { return QStringLiteral("保存为表情包")
 QString AppStrings::nicknamePlaceholder(const QString &saveShortcut, const QString &cancelShortcut,
                                         const QString &aiShortcut)
 {
-    return QStringLiteral("输入 nickname，每行一个\n%1 保存  ·  %2 取消  ·  %3 AI识图")
+    return QStringLiteral("输入标签，每行一个\n%1 保存  ·  %2 取消  ·  %3 AI识图")
         .arg(saveShortcut, cancelShortcut, aiShortcut);
 }
 QString AppStrings::thumbnailUnavailable() { return QStringLiteral("无法预览这张图片"); }
@@ -36,26 +36,26 @@ QString AppStrings::cancelButton(const QString &shortcut) { return QStringLitera
 QString AppStrings::saveShortcutCaption() { return QStringLiteral("Ctrl+S"); }
 QString AppStrings::cancelShortcutCaption() { return QStringLiteral("Esc"); }
 
-QString AppStrings::searchPlaceholder() { return QStringLiteral("搜索nickname……（Enter 选择，Esc 关闭）"); }
-QString AppStrings::addNicknameAction() { return QStringLiteral("添加nickname"); }
-QString AppStrings::editNicknamesAction() { return QStringLiteral("编辑nickname"); }
-QString AppStrings::manageOneNicknameMenu() { return QStringLiteral("管理单个nickname"); }
-QString AppStrings::modifyNicknamesAction() { return QStringLiteral("修改nicknames..."); }
-QString AppStrings::editNicknameAction() { return QStringLiteral("编辑nickname"); }
-QString AppStrings::deleteNicknameAction() { return QStringLiteral("删除nickname"); }
+QString AppStrings::searchPlaceholder() { return QStringLiteral("搜索标签……（Enter 选择，Esc 关闭）"); }
+QString AppStrings::addNicknameAction() { return QStringLiteral("添加标签"); }
+QString AppStrings::editNicknamesAction() { return QStringLiteral("编辑标签"); }
+QString AppStrings::manageOneNicknameMenu() { return QStringLiteral("管理单个标签"); }
+QString AppStrings::modifyNicknamesAction() { return QStringLiteral("修改标签..."); }
+QString AppStrings::editNicknameAction() { return QStringLiteral("编辑标签"); }
+QString AppStrings::deleteNicknameAction() { return QStringLiteral("删除标签"); }
 QString AppStrings::deleteMemeAction() { return QStringLiteral("删除表情包"); }
-QString AppStrings::duplicateNicknameMessage() { return QStringLiteral("同一表情包内nickname不能重复。"); }
-QString AppStrings::lastNicknameMessage() { return QStringLiteral("不能删除最后一个nickname。"); }
+QString AppStrings::duplicateNicknameMessage() { return QStringLiteral("同一表情包内标签不能重复。"); }
+QString AppStrings::lastNicknameMessage() { return QStringLiteral("不能删除最后一个标签。"); }
 QString AppStrings::deleteMemeTitle() { return QStringLiteral("删除表情包"); }
-QString AppStrings::deleteMemeQuestion() { return QStringLiteral("将同时删除原图、缩略图和全部nickname，确定继续吗？"); }
+QString AppStrings::deleteMemeQuestion() { return QStringLiteral("将同时删除原图、缩略图和全部标签，确定继续吗？"); }
 QString AppStrings::missingMemeText() { return QStringLiteral("表情包找不到了……_(:з)∠)_"); }
 
-QString AppStrings::nicknameEditorTitle() { return QStringLiteral("编辑nickname"); }
-QString AppStrings::oneNicknamePerLine() { return QStringLiteral("每行一个nickname；删除某行即删除该nickname"); }
+QString AppStrings::nicknameEditorTitle() { return QStringLiteral("编辑标签"); }
+QString AppStrings::oneNicknamePerLine() { return QStringLiteral("每行一个标签；删除某行即删除该标签"); }
 QString AppStrings::editorSaveButton() { return QStringLiteral("保存 (Ctrl+S)"); }
 QString AppStrings::editorCancelButton() { return QStringLiteral("取消 (Esc)"); }
-QString AppStrings::invalidNicknamesMessage() { return QStringLiteral("至少需要一个nickname，且同一表情包内不能重复。"); }
-QString AppStrings::editSingleNicknameLabel() { return QStringLiteral("nickname"); }
+QString AppStrings::invalidNicknamesMessage() { return QStringLiteral("至少需要一个标签，且同一表情包内不能重复。"); }
+QString AppStrings::editSingleNicknameLabel() { return QStringLiteral("标签"); }
 
 QString AppStrings::settingsWindowTitle() { return QStringLiteral("MemeServant2 设置"); }
 QString AppStrings::generalPage() { return QStringLiteral("常规"); }
@@ -118,13 +118,13 @@ QString AppStrings::gifCompatModeHint()
 {
     return QStringLiteral("捕获到 GIF 时，按帧序号均匀抽取若干帧纵向拼成一张长图再发给识图模型"
                           "（帧数由 8MB 请求上限和每帧大小决定，包含头尾），"
-                          "让 nickname 建议能参考动作变化；会增加请求图片尺寸和识别耗时。"
+                          "让标签建议能参考动作变化；会增加请求图片尺寸和识别耗时。"
                           "关闭时只发送第一帧。");
 }
-QString AppStrings::aiNicknameExampleCountLabel() { return QStringLiteral("Nickname风格示例数"); }
+QString AppStrings::aiNicknameExampleCountLabel() { return QStringLiteral("标签风格示例数"); }
 QString AppStrings::aiNicknameExampleCountHint()
 {
-    return QStringLiteral("每次请求从已有nickname中随机选择；设为0表示不使用风格示例。");
+    return QStringLiteral("每次请求从已有标签中随机选择；设为0表示不使用风格示例。");
 }
 QString AppStrings::endpointHint() { return QStringLiteral("结尾应该是一个带 /chat/completions 的URL。"); }
 QString AppStrings::keepApiKeyPlaceholder() { return QStringLiteral("留空表示不修改已保存密钥"); }
@@ -158,7 +158,7 @@ QString AppStrings::importFinishedTitle() { return QStringLiteral("导入完成"
 // 生成导入统计摘要；失败数量由调用方另行追加。
 QString AppStrings::importFinishedMessage(int memes, int nicknames)
 {
-    return QStringLiteral("已导入 %1 个表情包、%2 个nickname。").arg(memes).arg(nicknames);
+    return QStringLiteral("已导入 %1 个表情包、%2 个标签。").arg(memes).arg(nicknames);
 }
 QString AppStrings::importedFailures(int count) { return QStringLiteral("\n失败：%1 项。").arg(count); }
 QString AppStrings::apiKeyMissingMessage() { return QStringLiteral("API_KEY或API_ENV_KEY至少需要配置一个。"); }
@@ -166,7 +166,7 @@ QString AppStrings::aiImageInvalidMessage() { return QStringLiteral("图片为�
 QString AppStrings::aiPromptUnavailableMessage() { return QStringLiteral("AI识图提示词资源无法读取。"); }
 QString AppStrings::aiHttpFailedMessage(int status) { return QStringLiteral("AI HTTP请求失败（状态 %1）。").arg(status); }
 QString AppStrings::aiTimeoutMessage() { return QStringLiteral("AI请求已超时（30秒）。"); }
-QString AppStrings::aiNicknameEmptyMessage() { return QStringLiteral("AI返回的nickname为空。"); }
+QString AppStrings::aiNicknameEmptyMessage() { return QStringLiteral("AI返回的标签为空。"); }
 QString AppStrings::saveFailedTitle() { return QStringLiteral("保存失败"); }
 QString AppStrings::copyFailedTitle() { return QStringLiteral("复制表情包失败"); }
 QString AppStrings::originalImageMissing() { return QStringLiteral("数据库记录对应的原图不存在。"); }
@@ -186,7 +186,7 @@ QString AppStrings::migrationBackupFailed() { return QStringLiteral("迁移前�
 // 将事务或 SQL 错误附加到 schema 迁移提示。
 QString AppStrings::migrationFailed(const QString &detail) { return QStringLiteral("Schema迁移失败：%1").arg(detail); }
 QString AppStrings::saveMemeFailed() { return QStringLiteral("保存表情包记录失败。"); }
-QString AppStrings::nicknameSaveFailed() { return QStringLiteral("nickname保存失败，可能存在重复名称。"); }
+QString AppStrings::nicknameSaveFailed() { return QStringLiteral("标签保存失败，可能存在重复名称。"); }
 QString AppStrings::deleteRecordFailed() { return QStringLiteral("删除数据库记录失败。"); }
 QString AppStrings::openAiCompatibleProvider() { return QStringLiteral("OpenAI Compatible"); }
 QString AppStrings::exampleEndpoint() { return QStringLiteral("https://api.example.com/v1/chat/completions"); }

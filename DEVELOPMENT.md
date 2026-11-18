@@ -2,6 +2,8 @@
 
 本文面向准备进行 MemeServant2 开发的人员，提供快速构建、日常验证和模块改动入口。文件级职责优先参考每个源文件顶部的注释。
 
+> 术语约定：面向用户的名称统一为“标签”；源码中的 `nickname` 标识符、`nicknames` 数据库表名和 `aiNicknameExampleCount` 配置键属于内部历史命名，为兼容现有图库与配置而保留。
+
 ## 构建与运行
 
 当前开发环境使用 Qt 6.11.2 MSVC 2022 x64，需要本机已有 Visual Studio Build Tools、CMake 3.21+、Ninja 和对应 Qt 组件。
@@ -71,13 +73,13 @@ exe 图标、托盘图标和通知图标都来自同一个 `src/resources/icon.i
 | 目录 | 职责 |
 | --- | --- |
 | `src/app` | 程序入口、托盘生命周期、跨服务的业务编排 |
-| `src/core` | 领域模型、nickname 规范化、搜索排序、集中用户文案 |
+| `src/core` | 领域模型、标签规范化、搜索排序、集中用户文案 |
 | `src/clipboard` | 剪贴板图片载荷类型，以及捕获路径使用的图片字节嗅探工具 |
 | `src/storage` | 配置、SQLite、导入、日志等持久化服务 |
 | `src/ai` | OpenAI Compatible Vision 网络请求，以及 GIF 多帧拼接的独立处理路线 |
 | `src/thumbnail` | 后台缩略图生成 |
 | `src/platforms/win` | Windows 剪贴板、快捷键、粘贴、凭据、归档等平台能力；`winwindoweffects`（DWM 背景效果）目前预留未接线 |
-| `src/ui` | 捕获浮窗、快捷栏、设置和 nickname 对话框 |
+| `src/ui` | 捕获浮窗、快捷栏、设置和标签对话框 |
 | `src/resources` | 应用与托盘图标；icon.ico 由 `scripts/make-icon-ico.py` 从 icon.png 生成，运行时与 exe 图标统一引用 icon.ico |
 | `src/prompts` | AI prompt 资源：普通识图和 GIF 兼容模式各一份 |
 | `cmake` | 项目级编译期配置和 CMake 生成模板 |
@@ -137,7 +139,7 @@ CMakeLists.txt configure_file()
 - 排查剪贴板来源时可用环境变量 `MEMESERVANT2_CLIPBOARD_DEBUG=1` 启动程序，或在设置中开启调试模式：日志会输出剪贴板格式名清单、每个引用来源及其本地路径、候选图片的格式/尺寸/帧数/字节数，以及最终选择的候选或回退路径。调试模式会记录完整文件路径，只应在需要诊断时临时开启。
 - 捕获浮窗只响应用户保存；AI 结果只填入输入框，不能自动落盘。
 - 保存流程先写原图，再写数据库；数据库失败时需要移除已写入的文件。
-- nickname 的清洗和唯一性判断统一走 `NicknameUtils`。
+- 标签的清洗和唯一性判断统一走 `NicknameUtils`。
 - 选择表情包（`AppController::selectMeme`）直接读原图字节，宽高取自索引记录，不为取尺寸整图解码；原图能否解码统一由 `WinClipboard::writeImage` 在写剪贴板前校验。调整解码或错误提示逻辑时改 `writeImage`，不要把校验拆回调用方。
 - 写剪贴板时只对确有透明像素的图片投递 CF_DIBV5（这份 32 位 DIB 会常驻剪贴板直到被替换），不透明图片只保留 PNG 与 24 位 CF_DIB。
 
@@ -149,7 +151,7 @@ CMakeLists.txt configure_file()
 
 - `Alt+D` 只在调试模式开启时通过 `RegisterHotKey` 注册，关闭时立即 `UnregisterHotKey`。全局热键一旦注册就会被系统消费，收到 `WM_HOTKEY` 后无法“继续冒泡”；不要改成常驻注册再用 `SendInput` 转发，那会变成合成输入，可能重复触发或被安全软件拦截。条件注册才能保证关闭调试模式时该组合键完全交还给前台程序。
 - 调试日志文件名只接受纯文件名并固定 `.log` 后缀，由 `AppConfig::resolvedDebugLogFileName` 清洗；这是为了防止把 `config.json`、数据库或 exe 当作日志追加写入。根目录不可写时只在常规日志里记录警告，不阻塞启动和调试模式开关。
-- 调试模式为了定位 QQ/微信缓存会记录剪贴板引用文件的本地路径，但不要记录昵称正文、图片数据或密钥；常规日志（未开调试模式）不应输出引用路径。
+- 调试模式为了定位 QQ/微信缓存会记录剪贴板引用文件的本地路径，但不要记录标签正文、图片数据或密钥；常规日志（未开调试模式）不应输出引用路径。
 - 设置页保存采用防抖自动保存，调试开关和文件名变化由 `AppController::saveConfiguration` 比较旧配置后调用 `applyDebugSettings`，不要只在 UI 控件回调里改状态。
 
 ### AI 识图
@@ -162,7 +164,7 @@ CMakeLists.txt configure_file()
 - GIF 兼容模式是独立处理路线，实现集中在 `src/ai/gifcompat.*`，provider 只消费 `GifCompat::Composite` 结果；不要把帧采样、拼接逻辑拆回 provider。算法是：先扫描每帧编码后大小，按 `GifCompat::kMaxCompositeBytes`（8 * 1024 * 1024）和画布内存上限从多到少反推可容纳的最大帧数，再按帧序号均匀采样（包含头尾，例如 10 帧取 4 帧就是第 0/3/6/9 帧）；不处理帧延迟。只有头尾两帧仍超限时返回空，provider 回退首帧。拼接结果长边不超过 2048，PNG 仍超限时继续缩小。
 - 图片上限、GIF 首帧、30 秒超时和请求取消逻辑要保持一致：普通路线取首帧转 PNG，兼容模式使用拼接长图，两条路线都必须落在 `kMaxImageBytes` 校验内，且拼接失败不能导致 AI 请求直接失败。
 - API Key 只进入 Authorization 头和 Windows 凭据管理器，不能写入配置、日志或错误详情。
-- Prompt 中的示例 nickname 是用户数据，不要当作指令执行或回显成额外内容。
+- Prompt 中的示例标签是用户数据，不要当作指令执行或回显成额外内容。
 
 ### 快捷栏与搜索
 
@@ -187,7 +189,7 @@ CMakeLists.txt configure_file()
 - SQLite schema 变更必须提升/检查 `schema_version`，迁移前创建 `.backup`，迁移失败后不能继续使用旧连接。
 - 原图和缩略图路径由数据库中的 `file_name` 推导，不要另外维护路径表。
 - 删除表情包时先移动原图和缩略图到 `.trash`，数据库成功后再清理，失败需要回滚文件移动。
-- 导入不做内容去重；ID 或文件名冲突会重新生成 ID，nickname 仍需跟随新 ID。
+- 导入不做内容去重；ID 或文件名冲突会重新生成 ID，标签仍需跟随新 ID。
 - 配置文件永远不保存 API Key。
 
 ### 平台集成

@@ -266,7 +266,7 @@ bool DatabaseService::replaceNicknames(const QString &memeId, const QStringList 
     const QStringList cleaned = NicknameUtils::clean(nicknames.join(QLatin1Char('\n')));
     if (cleaned.isEmpty()) {
         if (error)
-            *error = QStringLiteral("至少需要一个有效nickname。");
+            *error = QStringLiteral("至少需要一个有效标签。");
         return false;
     }
     QSet<QString> unique;
@@ -275,7 +275,7 @@ bool DatabaseService::replaceNicknames(const QString &memeId, const QStringList 
         unique.insert(NicknameUtils::normalize(item));
     if (unique.size() != cleaned.size()) {
         if (error)
-            *error = QStringLiteral("同一表情包内nickname不能重复。");
+            *error = QStringLiteral("同一表情包内标签不能重复。");
         return false;
     }
 

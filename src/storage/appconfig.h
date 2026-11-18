@@ -15,7 +15,7 @@ struct AppConfig
     int maxHeight = 1080;
     QString saveShortcut = QStringLiteral("Ctrl+S");
     QString cancelShortcut = QStringLiteral("Esc");
-    QString aiShortcut = QStringLiteral("Alt+A");
+    QString aiShortcut = QStringLiteral("Ctrl+Alt+Q");
     QString quickHotkey = QStringLiteral("Ctrl+Alt+X");
     int rows = 1;
     int columns = 3;

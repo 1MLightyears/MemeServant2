@@ -100,7 +100,7 @@ AppConfig ConfigStore::load()
     if (config.saveShortcut == QLatin1String("Enter") || config.saveShortcut == QLatin1String("Return"))
         config.saveShortcut = QStringLiteral("Ctrl+S");
     config.cancelShortcut = object.value(QStringLiteral("cancelShortcut")).toString(QStringLiteral("Esc"));
-    config.aiShortcut = object.value(QStringLiteral("aiShortcut")).toString(QStringLiteral("Alt+A"));
+    config.aiShortcut = object.value(QStringLiteral("aiShortcut")).toString(QStringLiteral("Ctrl+Alt+Q"));
     config.quickHotkey = object.value(QStringLiteral("quickHotkey")).toString(QStringLiteral("Ctrl+Alt+X"));
     int rows = object.value(QStringLiteral("rows")).toInt(1);
     config.columns = qBound(1, object.value(QStringLiteral("columns")).toInt(3), 8);

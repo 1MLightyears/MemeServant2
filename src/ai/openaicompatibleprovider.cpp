@@ -123,7 +123,7 @@ QString nicknamePrompt(const QStringList &examples, bool gifCompatMode)
             exampleLines.append(QStringLiteral("- %1").arg(example));
     }
     const QString section = exampleLines.isEmpty()
-                                ? QStringLiteral("（本次未提供nickname示例）")
+                                ? QStringLiteral("（本次未提供标签示例）")
                                 : exampleLines.join(QLatin1Char('\n'));
     return prompt.replace(QLatin1String(kNicknameExamplesMarker), section).trimmed();
 }
@@ -359,7 +359,7 @@ void OpenAiCompatibleProvider::requestNickname(const QByteArray &rawBytes, const
             .arg(usage.value(QStringLiteral("completion_tokens")).toInt(-1))
             .arg(reasoningTokens));
         if (nickname.isEmpty()) {
-            LogService::instance().error(QStringLiteral("AI[%1] 未返回可用nickname").arg(requestTag));
+            LogService::instance().error(QStringLiteral("AI[%1] 未返回可用标签").arg(requestTag));
             emit failed(AppStrings::aiNicknameEmptyMessage());
         } else {
             emit succeeded(nickname);
