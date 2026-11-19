@@ -4,6 +4,7 @@
 
 // 连接配置、数据库、平台服务、后台任务与 UI，但不直接操作 Win32。
 #include <QAbstractNativeEventFilter>
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -66,7 +67,7 @@ signals:
 private:
     /// 从数据库刷新快捷栏索引，并按需启动缩略图扫描。
     void reloadRecords(bool scheduleThumbnails = true);
-    /// 过滤无效或超尺寸图片后发出捕获信号。
+    /// 过滤无效、超尺寸或与上一次捕获内容重复的图片后发出捕获信号。
     void handleCapture(const CapturedImage &image);
     /// 幂等地同步调试日志文件和 Alt+D 剪贴板诊断快捷键状态。
     void applyDebugSettings();
@@ -94,6 +95,8 @@ private:
     bool m_startupHotkeyConflict = false;
     /// 缩略图扫描进行中又收到新快照时挂起一次，当前扫描结束后补扫。
     bool m_thumbnailScanPending = false;
+    /// 最近一次进入捕获流程的剪贴板图片内容指纹；相同内容再次出现时视为重复发布，不再弹窗。
+    QByteArray m_lastCaptureFingerprint;
 };
 
 #endif

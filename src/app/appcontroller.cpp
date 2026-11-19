@@ -3,6 +3,7 @@
 #include "core/appstrings.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -254,17 +255,21 @@ void AppController::logClipboardDiagnostics()
     QString verdict;
     bool unexpected = false;
     if (!m_config.captureEnabled) {
-        verdict = QStringLiteral("剪贴板监听已暂停（captureEnabled=false），任何图片都不会弹出捕获浮窗");
+        verdict = QStringLiteral("剪贴板监听已暂停");
     } else if (snapshot.selfWritten) {
-        verdict = QStringLiteral("剪贴板带本程序自写标记，会被 selfWritten 过滤，不弹浮窗属于预期行为");
+        verdict = QStringLiteral("剪贴板更新由本程序引起，不捕获");
     } else if (!captured.isValid) {
-        verdict = QStringLiteral("当前剪贴板没有可捕获的图片（文本、文件列表、多图引用等不会激活捕获浮窗）");
+        verdict = QStringLiteral("当前剪贴板没有可捕获的图片");
+    } else if (!m_lastCaptureFingerprint.isEmpty()
+               && QCryptographicHash::hash(captured.encoded, QCryptographicHash::Sha256)
+                      == m_lastCaptureFingerprint) {
+        verdict = QStringLiteral("图片内容与上一次捕获相同，不捕获");
     } else if (captured.width > m_config.maxWidth || captured.height > m_config.maxHeight) {
-        verdict = QStringLiteral("图片尺寸超过捕获阈值 %1x%2，会被尺寸上限过滤")
+        verdict = QStringLiteral("图片尺寸超过捕获阈值 %1x%2，被尺寸上限过滤")
                       .arg(m_config.maxWidth)
                       .arg(m_config.maxHeight);
     } else if (m_captureToast) {
-        verdict = QStringLiteral("捕获浮窗当前已存在，本次内容满足捕获条件");
+        verdict = QStringLiteral("捕获浮窗当前已存在");
     } else {
         verdict = QStringLiteral("内容满足捕获条件但当前没有捕获浮窗；若刚复制图片却没有出现浮窗，"
                                  "请检查剪贴板监听或捕获事件是否丢失");
@@ -320,11 +325,23 @@ void AppController::startThumbnailScan(const QVector<MemeRecord> &records)
     }, Qt::QueuedConnection);
 }
 
-// 捕获入口只接受启用监听、内容有效且不是本程序回写的图片。
+// 捕获入口只接受启用监听、内容有效、非本程序回写且与上一次捕获内容不同的图片。
 void AppController::handleCapture(const CapturedImage &image)
 {
     if (!m_config.captureEnabled || !image.isValid || image.selfWritten)
         return;
+    // WM_CLIPBOARDUPDATE 只代表剪贴板被写过一次，不代表用户复制了新图片：延迟渲染格式被读取、
+    // 系统窗口/安全桌面切换等场景会让系统把同一张旧图片重新发布到剪贴板。内容与上一次捕获
+    // 完全相同时不再弹窗，避免把“重新发布”误判成新复制。
+    const QByteArray fingerprint = QCryptographicHash::hash(image.encoded, QCryptographicHash::Sha256);
+    const bool repeated = !m_lastCaptureFingerprint.isEmpty() && fingerprint == m_lastCaptureFingerprint;
+    // 无论是否超过尺寸阈值都更新“最近看到的剪贴板图片”，否则被尺寸过滤的图片会让去重基准
+    // 停留在更早的图片上。
+    m_lastCaptureFingerprint = fingerprint;
+    if (repeated) {
+        LogService::instance().info(QStringLiteral("剪贴板图片内容与上一次捕获相同，判定为重复发布，已跳过"));
+        return;
+    }
     if (image.width > m_config.maxWidth || image.height > m_config.maxHeight) {
         LogService::instance().info(QStringLiteral("剪贴板图片超过捕获尺寸阈值"));
         return;
@@ -406,6 +423,10 @@ bool AppController::saveConfiguration(AppConfig config, QString *error)
     if (!m_configStore.save(config, error))
         return false;
     m_config = config;
+    // 暂停监听期间可能复制过多张图片；恢复监听时清空去重基准，避免恢复后复制的同内容图片
+    // 被误判成重复发布而不弹捕获浮窗。
+    if (!oldConfig.captureEnabled && config.captureEnabled)
+        m_lastCaptureFingerprint.clear();
     // 调试开关或调试日志文件名变化时，立即同步日志文件和 Alt+D 热键的注册状态。
     if (config.debugMode != oldConfig.debugMode
         || config.resolvedDebugLogFileName() != oldConfig.resolvedDebugLogFileName())

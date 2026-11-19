@@ -39,6 +39,36 @@ bool clipboardDebugEnabled()
            || LogService::instance().isDebugFileEnabled();
 }
 
+// 调试模式专用：描述当前剪贴板所有者进程，用于确认是哪一路程序重新发布了剪贴板。
+// 只在调试日志里使用，正常运行时不会调用。
+QString clipboardOwnerSummary()
+{
+    const HWND owner = GetClipboardOwner();
+    if (!owner)
+        return QStringLiteral("无（打开剪贴板时未指定窗口）");
+    DWORD processId = 0;
+    GetWindowThreadProcessId(owner, &processId);
+    wchar_t className[128] = {};
+    const int classLength = GetClassNameW(owner, className, 128);
+    QString processName;
+    if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)) {
+        wchar_t imagePath[1024] = {};
+        DWORD imagePathLength = 1024;
+        if (QueryFullProcessImageNameW(process, 0, imagePath, &imagePathLength)) {
+            processName = QFileInfo(QString::fromWCharArray(imagePath,
+                                                           static_cast<qsizetype>(imagePathLength)))
+                              .fileName();
+        }
+        CloseHandle(process);
+    }
+    return QStringLiteral("PID=") + QString::number(processId)
+           + QStringLiteral("，进程=")
+           + (processName.isEmpty() ? QStringLiteral("未知") : processName)
+           + QStringLiteral("，窗口类=")
+           + (classLength > 0 ? QString::fromWCharArray(className, classLength)
+                              : QStringLiteral("未知"));
+}
+
 // 从可移动全局内存复制有限大小的字节，避免锁定失败或异常大小导致崩溃。
 QByteArray globalBytes(HANDLE handle)
 {
@@ -588,12 +618,12 @@ WinClipboard::~WinClipboard()
         UnregisterClassW(reinterpret_cast<LPCWSTR>(MAKEINTATOM(m_windowClass)), GetModuleHandleW(nullptr));
 }
 
-// 接收剪贴板更新消息，读取当前内容并转交业务层过滤。
+// 接收剪贴板更新消息，过滤重复通知后读取当前内容并转交业务层过滤。
 LRESULT CALLBACK WinClipboard::windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
     auto *clipboard = reinterpret_cast<WinClipboard *>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_CLIPBOARDUPDATE && clipboard) {
-        clipboard->dispatchCaptured(clipboard->readClipboard());
+        clipboard->handleClipboardUpdate();
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -1063,8 +1093,44 @@ WinClipboard::ClipboardSnapshot WinClipboard::debugSnapshot()
     }
     // 关闭剪贴板后再按正常捕获路径读取：文件读取、解码和 DIB 转换都不持有全局锁。
     snapshot.image = readClipboard();
+    // 读取延迟渲染格式可能让所有者把数据真正写进剪贴板，从而给自己投递一条新的
+    // WM_CLIPBOARDUPDATE；刷新序列号，避免调试快照的副作用被当成新的捕获事件。
+    m_lastSequence = GetClipboardSequenceNumber();
     snapshot.selfWritten = snapshot.selfWritten || snapshot.image.selfWritten;
     return snapshot;
+}
+
+// 处理一次 WM_CLIPBOARDUPDATE。这个通知只说明“系统向剪贴板写过内容”，并不等于用户刚复制了
+// 新图片：读取延迟渲染格式会让所有者落盘数据、安全桌面/UAC 切换等系统行为也可能重新发布剪贴板，
+// 此时通知里的图片仍是上一张。先用剪贴板序列号滤掉没有实际写入的重复通知，再把内容交给业务层；
+// 业务层再按图片内容指纹过滤“内容相同的重新发布”。
+void WinClipboard::handleClipboardUpdate()
+{
+    const bool verbose = clipboardDebugEnabled();
+    const DWORD sequence = GetClipboardSequenceNumber();
+    if (verbose) {
+        LogService::instance().info(QStringLiteral("调试：剪贴板更新，序列号=%1，所有者：%2")
+                                        .arg(sequence)
+                                        .arg(clipboardOwnerSummary()));
+    }
+    if (sequence != 0 && sequence == m_lastSequence) {
+        LogService::instance().info(QStringLiteral("剪贴板序列号未变化（%1），没有新的剪贴板写入，"
+                                                   "已忽略本次更新通知")
+                                        .arg(sequence));
+        return;
+    }
+
+    const CapturedImage image = readClipboard();
+    // 读取延迟渲染格式同样会让剪贴板序列号前进；记录读取后的序列号，使这一自激产生的
+    // 后续通知在入口处就被过滤掉，而不是再完整读取一遍剪贴板。
+    const DWORD sequenceAfterRead = GetClipboardSequenceNumber();
+    m_lastSequence = sequenceAfterRead != 0 ? sequenceAfterRead : sequence;
+    if (verbose && sequenceAfterRead != 0 && sequenceAfterRead != sequence) {
+        LogService::instance().info(QStringLiteral("调试：本次读取使剪贴板序列号从 %1 变为 %2")
+                                        .arg(sequence)
+                                        .arg(sequenceAfterRead));
+    }
+    dispatchCaptured(image);
 }
 
 // 丢弃本程序回写和无效事件，只向上层发出有效图片。
@@ -1185,6 +1251,9 @@ bool WinClipboard::writeImage(const CapturedImage &captured, QString *error)
                                             + failedFormats.join(QStringLiteral("，"));
     LogService::instance().info(QStringLiteral("已将图片写入系统剪贴板，格式：")
                                 + writtenFormats.join(QStringLiteral("、")) + failureSuffix);
+    // 写回本身会触发一条 WM_CLIPBOARDUPDATE；记录写入后的序列号让它在入口处被跳过，
+    // selfWritten 标记仍保留为兜底（序列号取不到时继续依赖标记过滤）。
+    m_lastSequence = GetClipboardSequenceNumber();
     return true;
 }
 

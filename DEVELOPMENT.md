@@ -130,13 +130,14 @@ CMakeLists.txt configure_file()
 改动时注意：
 
 - `selfWritten` 必须继续区分程序写回的图片，避免捕获循环。
+- `WM_CLIPBOARDUPDATE` 只表示“系统向剪贴板写过内容”，不表示用户刚复制了新图片：读取延迟渲染格式会让所有者把数据真正写进剪贴板，安全桌面/UAC（计算机管理、性能监视器等提权系统窗口）切换等系统行为也可能重新发布剪贴板，此时读到的仍是上一张旧图片。`WinClipboard::handleClipboardUpdate` 先用 `GetClipboardSequenceNumber` 滤掉“序列号没变”的重复通知（`writeImage` 和 `debugSnapshot` 结束时同样刷新序列号，避免自己的写入/读取产生的通知被当成新事件），`AppController::handleCapture` 再用图片内容 SHA-256 指纹滤掉“与上一次捕获内容相同”的重新发布。不要只凭“能读到图片”就弹捕获浮窗；`selfWritten` 只覆盖本程序回写，覆盖不了系统重新发布。副作用是连续两次复制同一张图片不会重复弹窗（内容没变即视为没有新图片），需要重新捕获时先复制别的图片或从快捷栏重新操作。
 - 读取路径的优先级是“剪贴板引用的原始文件 > HTML/Markdown 内嵌 GIF > 注册编码格式 > DIB”。QQ/微信复制消息或表情时会写 `QQ_Unicode_RichEdit_Format`（旧版为 `QQ_RichEdit_Format`）和 `HTML Format`，其中的 `filepath`/`file://` 指向原始图片文件；`CF_HDROP` 也常直接给出文件路径。这些引用比剪贴板里的静态重编码格式更保真，改动时不要为了省事把它们重新忽略掉。
 - 读到的引用文件统一经 `ImageBytes::formatOf` 按魔数识别，先按路径去重、再按内容 SHA-256 去重，然后按“唯一候选 → 唯一多帧动图 → 唯一单帧 GIF → 最高优先级来源恰好一个候选”的顺序选择；同一来源仍有多张不同图片时宁可放弃也不猜，避免多选文件后存错图。内容去重是必要的：QQ/微信会把同一张图通过 FileDrop、富文本和 HTML 以不同临时路径重复发布，不去重会被“多张图片”保护规则误判并退化成静态首帧。来源优先级为富文本 > HTML/Markdown > 文件列表（`CF_HDROP` 常是转码后的临时副本），但它只在前几步都无法唯一确定时兜底。引用的文件可能是加密缓存或已删除的临时文件，读取失败要静默回退到剪贴板编码/位图；`ImageBytes::gifFrameCount` 直接扫描 GIF 块结构数帧，不依赖图片插件的 `imageCount()`。
 - 剪贴板 HTML/Markdown 中的 `http(s)` URL 只作为文本忽略，捕获流程不下载任何网络资源：仅凭 URL 后缀无法确认内容真的是图片，主动下载会引入 SSRF/恶意内容风险。CF_HTML 只用于提取 `file://` 本地路径（QQ/微信富文本）和内嵌 `data:` 图片。
 - 读取路径按编码格式族依次尝试注册名（GIF、PNG、JPEG 各自有多个约定名，归族后共用同一套处理逻辑）；仅当 CF_DIBV5 是剪贴板原生格式时才直接读它，否则读 CF_DIB，避免系统合成的额外转换和透明度丢失。原生性用 `EnumClipboardFormats` 的枚举顺序判断（系统把可转换格式追加在末尾，与 Qt 的做法一致）。
 - 没有 alpha 掩码的 32 位 DIB（BITMAPINFOHEADER 的 BI_RGB 或三掩码 BI_BITFIELDS）按不透明处理；DIBV5 声明了 AlphaMask 但数据 alpha 全为 0 时按不透明兜底，避免存出全透明图片。
 - `OpenClipboard` 期间只做格式判断和字节拷贝，解码、DIB 转换和 PNG 编码都在关闭剪贴板后进行，避免长时间占用全局剪贴板锁。
-- 排查剪贴板来源时可用环境变量 `MEMESERVANT2_CLIPBOARD_DEBUG=1` 启动程序，或在设置中开启调试模式：日志会输出剪贴板格式名清单、每个引用来源及其本地路径、候选图片的格式/尺寸/帧数/字节数，以及最终选择的候选或回退路径。调试模式会记录完整文件路径，只应在需要诊断时临时开启。
+- 排查剪贴板来源时可用环境变量 `MEMESERVANT2_CLIPBOARD_DEBUG=1` 启动程序，或在设置中开启调试模式：日志会输出剪贴板格式名清单、每个引用来源及其本地路径、候选图片的格式/尺寸/帧数/字节数，以及最终选择的候选或回退路径；每次剪贴板更新还会记录序列号和剪贴板所有者进程（`WinClipboard::handleClipboardUpdate`），用于确认“这次更新是不是真的有新图片/是谁写入了剪贴板”。调试模式会记录完整文件路径，只应在需要诊断时临时开启。
 - 捕获浮窗只响应用户保存；AI 结果只填入输入框，不能自动落盘。
 - 保存流程先写原图，再写数据库；数据库失败时需要移除已写入的文件。
 - 标签的清洗和唯一性判断统一走 `NicknameUtils`。
@@ -145,7 +146,7 @@ CMakeLists.txt configure_file()
 
 ### 调试模式与日志
 
-常规日志由 `LogService` 写入程序目录 `logs/memeservant2.log` 并做 5MB 轮转。设置中的“调试模式”开启后，同一批日志行会再追加到程序根目录的调试日志文件（`AppConfig::debugLogFileName`，默认 `debug.log`），文件不轮转、只追加。调试模式还会打开 `WinClipboard` 的详细诊断输出（格式清单、引用来源与路径、候选图片详情、回退路径），并注册 `Alt+D` 全局快捷键：`AppController::logClipboardDiagnostics` 调用 `WinClipboard::debugSnapshot` 读取一次当前剪贴板，把格式清单、捕获读取结果和“为什么没有激活捕获浮窗”的判定写入调试日志。
+常规日志由 `LogService` 写入程序目录 `logs/memeservant2.log` 并做 5MB 轮转。设置中的“调试模式”开启后，同一批日志行会再追加到程序根目录的调试日志文件（`AppConfig::debugLogFileName`，默认 `debug.log`），文件不轮转、只追加。调试模式还会打开 `WinClipboard` 的详细诊断输出（每次更新时的剪贴板序列号与所有者进程、格式清单、引用来源与路径、候选图片详情、回退路径），并注册 `Alt+D` 全局快捷键：`AppController::logClipboardDiagnostics` 调用 `WinClipboard::debugSnapshot` 读取一次当前剪贴板，把格式清单、捕获读取结果和“为什么没有激活捕获浮窗”的判定写入调试日志。
 
 改动时注意：
 

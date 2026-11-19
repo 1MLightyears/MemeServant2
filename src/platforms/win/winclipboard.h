@@ -45,6 +45,8 @@ private:
 
     /// 处理窗口创建、剪贴板更新和销毁等窗口消息。
     static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    /// 处理一次 WM_CLIPBOARDUPDATE：先用剪贴板序列号滤掉没有实际写入的重复通知，再读取内容。
+    void handleClipboardUpdate();
     /// 从当前剪贴板读取单个图片并尽量保留原始编码。
     CapturedImage readClipboard();
     /// 过滤无效载荷后发出 imageCaptured 信号。
@@ -57,6 +59,8 @@ private:
     HWND m_window = nullptr;
     ATOM m_windowClass = 0;
     UINT m_ownerMarker = 0;
+    /// 最近一次已经处理过的剪贴板序列号；WM_CLIPBOARDUPDATE 与它相同时说明剪贴板内容没变。
+    DWORD m_lastSequence = 0;
     /// CF_HTML：浏览器复制图片时会在其中写入原图 URL，QQ/微信富文本也会写本地路径。
     UINT m_htmlFormat = 0;
     /// QQ/微信复制消息时写入的富文本 XML，EditElement 的 filepath 指向原图/表情文件。

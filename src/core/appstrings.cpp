@@ -74,9 +74,9 @@ QString AppStrings::debugGroupTitle() { return QStringLiteral("调试"); }
 QString AppStrings::debugModeText() { return QStringLiteral("调试模式"); }
 QString AppStrings::debugModeHint()
 {
-    return QStringLiteral("开启后，程序日志会追加写入程序根目录下的调试日志文件，并注册 Alt+D 快捷键："
-                          "每按一次读取当前剪贴板，把格式清单和“为什么没有弹出捕获浮窗”的判定写入日志，"
-                          "用于排查漏捕获。关闭调试模式会立即注销该快捷键，Alt+D 恢复由系统和其他程序正常处理。");
+    return QStringLiteral("开启后，程序日志会追加写入程序根目录下的调试日志文件，并注册 Alt+D 快捷键。"
+                          "功能：读取当前剪贴板，把格式清单和判定写入日志，"
+                          "用于排查漏捕获和错误捕获。");
 }
 QString AppStrings::debugLogFileNameLabel() { return QStringLiteral("调试日志文件名"); }
 QString AppStrings::debugLogFileNamePlaceholder() { return QStringLiteral("debug.log"); }
